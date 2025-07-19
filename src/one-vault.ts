@@ -59,7 +59,6 @@ interface VaultMetadata {
   dataType: string;
   created: Date;
   lastAccessed: Date;
-  totalRecords: number;
   encryption: boolean;
   compression: boolean;
   encoding: string;
@@ -104,7 +103,6 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
       dataType: 'T', // Will be inferred from usage
       created: new Date(),
       lastAccessed: new Date(),
-      totalRecords: 0,
       encryption: config.encryption || false,
       compression: config.compression || false,
       encoding: config.encoding || 'utf8',
@@ -177,8 +175,8 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
     
     const vault = new OneVault<T>(props);
     
-    // Update last accessed time
-    await vault.saveVaultMetadata();
+    // Only update lastAccessed in memory (no expensive write)
+    vault.props.vaultMetadata.lastAccessed = new Date();
     
     return vault;
   }
@@ -235,10 +233,7 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
     
     await this.props.indexer.add(indexRecord);
     
-    // Update vault metadata
-    this.props.vaultMetadata.totalRecords = (await this.props.indexer.query({})).length;
-    this.props.vaultMetadata.lastAccessed = new Date();
-    await this.saveVaultMetadata();
+    // No expensive metadata updates on save operations
   }
 
   /**
@@ -258,9 +253,7 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
       const file = File.fromJSON<VaultRecord<T>>(rawData);
       const vaultRecord = file.toDomain();
       
-      // Update last accessed
-      this.props.vaultMetadata.lastAccessed = new Date();
-      await this.saveVaultMetadata();
+      // No expensive metadata updates on get operations
       
       return vaultRecord?.data || null;
     } catch (error) {
@@ -334,10 +327,7 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
       // Remove from index
       await this.props.indexer.remove(id);
       
-      // Update vault metadata
-      this.props.vaultMetadata.totalRecords = (await this.props.indexer.query({})).length;
-      this.props.vaultMetadata.lastAccessed = new Date();
-      await this.saveVaultMetadata();
+      // No expensive metadata updates on delete operations
       
       return true;
     } catch (error) {
@@ -347,15 +337,14 @@ export class OneVault<T = unknown> extends Unit<OneVaultProps<T>> {
   }
 
   /**
-   * Get vault statistics
+   * Get vault statistics (calculated dynamically)
    */
   async stats(): Promise<{ name: string; totalRecords: number; metadata: VaultMetadata }> {
     const records = await this.props.indexer.query({});
-    this.props.vaultMetadata.totalRecords = records.length;
     
     return {
       name: this.props.vaultMetadata.name,
-      totalRecords: records.length,
+      totalRecords: records.length, // Calculated on demand
       metadata: this.props.vaultMetadata
     };
   }
@@ -421,7 +410,6 @@ OneVault<T> Unit - Single-purpose, type-safe vault
 NAME: ${this.props.vaultMetadata.name}
 TYPE: ${this.props.vaultMetadata.dataType}
 PATH: ${this.props.path}
-RECORDS: ${this.props.vaultMetadata.totalRecords}
 CREATED: ${this.props.vaultMetadata.created}
 LAST ACCESSED: ${this.props.vaultMetadata.lastAccessed}
 
