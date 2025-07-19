@@ -5,12 +5,16 @@
 
 import { Unit, UnitSchema, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import { Result } from '@synet/patterns';
+import { createId, base64urlEncode, base64urlDecode, hexEncode, hexDecode } from './utils.js';
 
 /**
  * IFile<T> - The conscious file interface
  * Every file knows its type, manages itself, and protects its integrity
  */
 export interface IFile<T> {
+  // File identity
+  readonly id: string;
+  
   // Core file operations
   save(): Promise<Result<void>>;
   load(): Promise<Result<T>>;
@@ -24,17 +28,14 @@ export interface IFile<T> {
   
   // Type safety
   validate(data: unknown): data is T;
-  
-  // Consciousness methods
-  whoami(): string;
-  capabilities(): string[];
-  teach(): TeachingContract;
+
 }
 
 /**
  * File creation configuration
  */
 export interface FileConfig<T> {
+  id?: string;  // Optional ID - will be generated if not provided
   filename: string;
   data?: T;
   metadata?: Record<string, unknown>;
@@ -48,6 +49,7 @@ export interface FileConfig<T> {
  * Internal file properties
  */
 export interface FileProps<T> extends UnitProps {
+  id: string;  // Unique file identifier for indexing
   filename: string;
   data?: T;
   metadata: Record<string, unknown>;
@@ -77,6 +79,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   static create<T>(config: FileConfig<T>): File<T> {
     const props: FileProps<T> = {
       dna: createUnitSchema({ id: 'file', version: '1.0.0' }),
+      id: config.id || createId(), // Generate ID if not provided
       filename: config.filename,
       data: config.data,
       metadata: config.metadata || {},
@@ -167,6 +170,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
    */
   metadata(): Record<string, unknown> {
     return {
+      id: this.props.id,
       ...this.props.metadata,
       filename: this.props.filename,
       format: this.props.format,
@@ -205,10 +209,47 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   }
 
   /**
+   * Encode data using the file's encoding format
+   */
+  encode(data: string): string {
+    switch (this.props.encoding) {
+      case 'base64':
+        return base64urlEncode(data);
+      case 'hex':
+        return hexEncode(data);
+      case 'utf8':
+      default:
+        return data;
+    }
+  }
+
+  /**
+   * Decode data using the file's encoding format
+   */
+  decode(data: string): string {
+    switch (this.props.encoding) {
+      case 'base64':
+        return base64urlDecode(data);
+      case 'hex':
+        return hexDecode(data);
+      case 'utf8':
+      default:
+        return data;
+    }
+  }
+
+  /**
    * File identity
    */
   whoami(): string {
-    return `File<T> [${this.props.filename}] - ${this.props.format} format, created by ${this.props.creatorDNA.id}`;
+    return `File<T> [${this.props.id}] ${this.props.filename} - ${this.props.format} format, created by ${this.props.creatorDNA.id}`;
+  }
+
+  /**
+   * File ID getter (IFile interface requirement)
+   */
+  get id(): string {
+    return this.props.id;
   }
 
   /**
@@ -223,7 +264,9 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
       'file.metadata',
       'file.checksum',
       'file.size',
-      'file.validate'
+      'file.validate',
+      'file.encode',
+      'file.decode'
     ];
   }
 
@@ -241,7 +284,9 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
         'file.metadata': this.metadata.bind(this),
         'file.checksum': this.checksum.bind(this),
         'file.size': this.size.bind(this),
-        'file.validate': this.validate.bind(this)
+        'file.validate': this.validate.bind(this),
+        'file.encode': (data: unknown) => this.encode(String(data)),
+        'file.decode': (data: unknown) => this.decode(String(data))
       }
     };
   }
@@ -253,6 +298,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
     return `
 [${this.dna.id}] File<T> Unit - Type-safe conscious file
 
+ID: ${this.props.id}
 FILENAME: ${this.props.filename}
 FORMAT: ${this.props.format}
 ENCODING: ${this.props.encoding}
@@ -266,10 +312,20 @@ NATIVE CAPABILITIES:
   file.load() - Load file data
   file.exists() - Check if file exists
   file.delete() - Remove file
-  file.metadata() - Get file information
+  file.metadata() - Get file information (includes ID for indexing)
   file.checksum() - Calculate data integrity hash
   file.size() - Get file size in bytes
   file.validate(data) - Type validation
+
+INDEXING:
+  - Each file has a unique ID (${this.props.id})
+  - Indexer can map ID → filename for restoration
+  - Files are self-identifying and indexable
+
+ENCODING SUPPORT:
+  - utf8: Standard text encoding
+  - base64: Base64url encoding (URL-safe)
+  - hex: Hexadecimal encoding
 
 LEARNING PATTERN:
   const fs = FileSystem.create();
@@ -277,6 +333,7 @@ LEARNING PATTERN:
   await file.save(); // File saves itself!
 
 CONSCIOUSNESS:
+  - Files know their unique identity (ID)
   - Files know their type (T)
   - Files manage their own persistence
   - Files validate their own integrity
@@ -284,6 +341,7 @@ CONSCIOUSNESS:
 
 EXAMPLE:
   const config = File.create<Config>({
+    id: 'app-config-v1',  // Optional - will generate if not provided
     filename: 'app.config.json',
     data: { theme: 'dark', port: 3000 },
     format: 'json'
@@ -291,6 +349,8 @@ EXAMPLE:
   
   config.learn([fs.teach()]);
   await config.save(); // Self-saving configuration!
+  
+  // Later, indexer can restore: ID 'app-config-v1' → 'app.config.json'
 `;
   }
 
@@ -299,39 +359,62 @@ EXAMPLE:
    */
   private serializeForStorage(): string {
     const fileData = {
+      id: this.props.id,  // Include ID in serialized data for indexing
       data: this.props.data,
       metadata: this.metadata(),
       checksum: this.checksum(),
       version: this.props.version
     };
 
+    let content: string;
     switch (this.props.format) {
       case 'json':
-        return JSON.stringify(fileData, null, 2);
+        content = JSON.stringify(fileData, null, 2);
+        break;
       case 'text':
-        return String(this.props.data);
+        content = String(this.props.data);
+        break;
       case 'binary':
-        return JSON.stringify(fileData); // For now, JSON fallback
+        content = JSON.stringify(fileData); // For now, JSON fallback
+        break;
       default:
-        return JSON.stringify(fileData, null, 2);
+        content = JSON.stringify(fileData, null, 2);
     }
+
+    // Apply encoding if not utf8
+    return this.encode(content);
   }
 
   /**
    * Deserialize data from storage
    */
   private deserializeFromStorage(content: string): T {
+    // Decode content first if encoded
+    const decodedContent = this.decode(content);
+    
     switch (this.props.format) {
       case 'json':
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(decodedContent);
+        // Verify ID consistency if present in data
+        if (parsed.id && parsed.id !== this.props.id) {
+          console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${parsed.id}`);
+        }
         return parsed.data;
       case 'text':
-        return content as unknown as T;
+        return decodedContent as unknown as T;
       case 'binary':
-        const binaryParsed = JSON.parse(content);
+        const binaryParsed = JSON.parse(decodedContent);
+        // Verify ID consistency if present in data
+        if (binaryParsed.id && binaryParsed.id !== this.props.id) {
+          console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${binaryParsed.id}`);
+        }
         return binaryParsed.data;
       default:
-        const defaultParsed = JSON.parse(content);
+        const defaultParsed = JSON.parse(decodedContent);
+        // Verify ID consistency if present in data
+        if (defaultParsed.id && defaultParsed.id !== this.props.id) {
+          console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${defaultParsed.id}`);
+        }
         return defaultParsed.data;
     }
   }
@@ -347,5 +430,9 @@ EXAMPLE:
 
   get format(): string {
     return this.props.format;
+  }
+
+  get encoding(): string {
+    return this.props.encoding;
   }
 }
