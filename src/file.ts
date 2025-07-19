@@ -339,13 +339,21 @@ EXAMPLE:
   }
 
   /**
-   * Serialize data for storage
+   * Serialize data for storage with selective encryption
    */
   private serializeForStorage(): string {
+    // Prepare data - encrypt only if encryption is enabled
+    const processedData = this.props.encryption && this.props.data
+      ? this.encryptData(this.props.data)
+      : this.props.data;
+
     const fileData = {
-      id: this.props.id,  // Include ID in serialized data for indexing
-      data: this.props.data,
-      metadata: this.metadata(),
+      id: this.props.id,  // Always plaintext for indexing
+      data: processedData, // Encrypted or plaintext based on settings
+      metadata: {
+        ...this.metadata(),
+        encrypted: this.props.encryption // Track encryption status
+      },
       checksum: this.checksum(),
       version: this.props.version
     };
@@ -365,41 +373,90 @@ EXAMPLE:
         content = JSON.stringify(fileData, null, 2);
     }
 
-    // Apply encoding if not utf8
+    // Apply encoding only for transport/storage optimization, not security
     return this.encode(content);
   }
 
   /**
-   * Deserialize data from storage
+   * Encrypt sensitive data (placeholder - implement real encryption)
+   */
+  private encryptData(data: T): string {
+    if (!this.props.encryption) {
+      return data as unknown as string;
+    }
+    
+    // TODO: Implement real encryption (AES-256-GCM, etc.)
+    // For now, just base64 encode as placeholder
+    const jsonData = JSON.stringify(data);
+    return `encrypted:${Buffer.from(jsonData).toString('base64')}`;
+  }
+
+  /**
+   * Decrypt sensitive data (placeholder - implement real decryption)
+   */
+  private decryptData(encryptedData: unknown): T {
+    if (!this.props.encryption || typeof encryptedData !== 'string') {
+      return encryptedData as T;
+    }
+    
+    // TODO: Implement real decryption
+    // For now, just base64 decode as placeholder
+    try {
+      if (encryptedData.startsWith('encrypted:')) {
+        const base64Data = encryptedData.substring('encrypted:'.length);
+        const jsonData = Buffer.from(base64Data, 'base64').toString('utf8');
+        return JSON.parse(jsonData);
+      }
+      return encryptedData as unknown as T;
+    } catch (error) {
+      console.warn('Failed to decrypt data, returning as-is:', error);
+      return encryptedData as unknown as T;
+    }
+  }
+
+  /**
+   * Deserialize data from storage with selective decryption
    */
   private deserializeFromStorage(content: string): T {
     // Decode content first if encoded
     const decodedContent = this.decode(content);
     
     switch (this.props.format) {
-      case 'json':
+      case 'json': {
         const parsed = JSON.parse(decodedContent);
         // Verify ID consistency if present in data
         if (parsed.id && parsed.id !== this.props.id) {
           console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${parsed.id}`);
         }
-        return parsed.data;
+        
+        // Decrypt data if it was encrypted
+        const isEncrypted = parsed.metadata?.encrypted || this.props.encryption;
+        return isEncrypted ? this.decryptData(parsed.data) : parsed.data;
+      }
       case 'text':
         return decodedContent as unknown as T;
-      case 'binary':
+      case 'binary': {
         const binaryParsed = JSON.parse(decodedContent);
         // Verify ID consistency if present in data
         if (binaryParsed.id && binaryParsed.id !== this.props.id) {
           console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${binaryParsed.id}`);
         }
-        return binaryParsed.data;
-      default:
+        
+        // Decrypt data if it was encrypted
+        const isEncrypted = binaryParsed.metadata?.encrypted || this.props.encryption;
+        return isEncrypted ? this.decryptData(binaryParsed.data) : binaryParsed.data;
+      }
+      default: {
         const defaultParsed = JSON.parse(decodedContent);
         // Verify ID consistency if present in data
         if (defaultParsed.id && defaultParsed.id !== this.props.id) {
           console.warn(`[${this.props.id}] ID mismatch in file data: expected ${this.props.id}, found ${defaultParsed.id}`);
         }
-        return defaultParsed.data;
+        
+        // Decrypt data if it was encrypted
+        const isEncrypted = defaultParsed.metadata?.encrypted || this.props.encryption;
+        return isEncrypted ? this.decryptData(defaultParsed.data) : defaultParsed.data;
+      }
     }
   }
 
