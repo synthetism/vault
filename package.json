@@ -1,0 +1,56 @@
+{
+  "name": "@synet/vault",
+  "version": "0.0.1",
+  "description": "Identity vault core",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "private": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synthetism/vault.git"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "dev:test": "vitest",
+    "clean": "rm -rf dist",
+    "prebuild": "npm run clean",
+    "coverage": "vitest run --coverage",
+    "lint": "biome lint ./src",
+    "format": "biome format --write './src'",
+    "prepublishOnly": "npm run lint && npm run build",
+    "version:dev": "npm version --no-git-tag-version prerelease --preid=dev",
+    "version:patch": "npm version --no-git-tag-version patch",
+    "version:minor": "npm version --no-git-tag-version minor",
+    "version:major": "npm version --no-git-tag-version major",
+    "publish:dev": "npm publish --registry=https://registry.dig.run/ --tag dev",
+    "publish:prod": "npm publish --registry=https://registry.npmjs.org/"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/node": "^22.15.31",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.3"
+  },
+  "keywords": [
+    "Synet",
+    "Decentralized Identity",
+    "Decentralized keys management system (KMS)",
+    "Synthetism",
+    "Synthetic Minds Identity",
+    "The future is not set",
+    "DID is the future of identity"
+  ],
+  "author": "Synet Team",
+  "homepage": "https://synthetism.ai/synet",
+  "license": "MIT",
+  "dependencies": {
+    "@synet/fs": "^1.0.5",
+    "@synet/logger": "^1.0.0",
+    "@synet/patterns": "^2.1.7",
+    "@synet/unit": "^1.0.5"
+  }
+}
