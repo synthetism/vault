@@ -18,9 +18,9 @@ export interface IFile<T> {
   delete(): Promise<Result<void>>;
   
   // File introspection
-  getMetadata(): Record<string, unknown>;
-  getChecksum(): string;
-  getSize(): Promise<number>;
+  metadata(): Record<string, unknown>;
+  checksum(): string;
+  size(): Promise<number>;
   
   // Type safety
   validate(data: unknown): data is T;
@@ -165,7 +165,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   /**
    * Get file metadata
    */
-  getMetadata(): Record<string, unknown> {
+  metadata(): Record<string, unknown> {
     return {
       ...this.props.metadata,
       filename: this.props.filename,
@@ -182,7 +182,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   /**
    * Calculate file checksum
    */
-  getChecksum(): string {
+  checksum(): string {
     // Simple checksum implementation - can be enhanced
     const content = JSON.stringify(this.props.data);
     return Buffer.from(content).toString('base64').slice(0, 16);
@@ -191,7 +191,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   /**
    * Get file size (rough estimate)
    */
-  async getSize(): Promise<number> {
+  async size(): Promise<number> {
     const content = this.serializeForStorage();
     return Buffer.byteLength(content, 'utf8');
   }
@@ -220,9 +220,9 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
       'file.load', 
       'file.exists',
       'file.delete',
-      'file.getMetadata',
-      'file.getChecksum',
-      'file.getSize',
+      'file.metadata',
+      'file.checksum',
+      'file.size',
       'file.validate'
     ];
   }
@@ -238,9 +238,9 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
         'file.load': this.load.bind(this),
         'file.exists': this.exists.bind(this),
         'file.delete': this.delete.bind(this),
-        'file.getMetadata': this.getMetadata.bind(this),
-        'file.getChecksum': this.getChecksum.bind(this),
-        'file.getSize': this.getSize.bind(this),
+        'file.metadata': this.metadata.bind(this),
+        'file.checksum': this.checksum.bind(this),
+        'file.size': this.size.bind(this),
         'file.validate': this.validate.bind(this)
       }
     };
@@ -266,9 +266,9 @@ NATIVE CAPABILITIES:
   file.load() - Load file data
   file.exists() - Check if file exists
   file.delete() - Remove file
-  file.getMetadata() - Get file information
-  file.getChecksum() - Calculate data integrity hash
-  file.getSize() - Get file size in bytes
+  file.metadata() - Get file information
+  file.checksum() - Calculate data integrity hash
+  file.size() - Get file size in bytes
   file.validate(data) - Type validation
 
 LEARNING PATTERN:
@@ -300,8 +300,8 @@ EXAMPLE:
   private serializeForStorage(): string {
     const fileData = {
       data: this.props.data,
-      metadata: this.getMetadata(),
-      checksum: this.getChecksum(),
+      metadata: this.metadata(),
+      checksum: this.checksum(),
       version: this.props.version
     };
 
