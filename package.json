@@ -52,6 +52,7 @@
   "license": "MIT",
   "dependencies": {
     "@synet/patterns": "^2.1.7",
+    "@synet/registry": "^0.0.1-dev.0",
     "@synet/unit": "^1.0.5"
   }
 }
