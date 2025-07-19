@@ -167,8 +167,8 @@ class Indexer extends Unit<IndexerProps> {
     if (this.props.storage === 'file') {
       const indexPath = this.getIndexFilePath();
       
-      if (this.can('fs.exists') && await this.execute('fs.exists', indexPath)) {
-        const content = await this.execute('fs.readFile', indexPath);
+      if (this.can('filesystem.existsSync') && await this.execute('filesystem.existsSync', indexPath)) {
+        const content = await this.execute('filesystem.readFileSync', indexPath);
         const indexData = JSON.parse(content as string);
         
         // Load records
@@ -196,7 +196,11 @@ class Indexer extends Unit<IndexerProps> {
         updated: new Date()
       };
       
-      await this.execute('fs.writeFile', indexPath, JSON.stringify(indexData, null, 2));
+      // Ensure directory exists
+      await this.execute('filesystem.ensureDirSync', this.props.indexPath);
+      
+      // Use the correct method name that FileSystem teaches
+      await this.execute('filesystem.writeFileSync', indexPath, JSON.stringify(indexData, null, 2));
     }
   }
   

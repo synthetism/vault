@@ -1,20 +1,15 @@
 import { Unit, UnitSchema, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import { Result } from '@synet/patterns';
-import { File } from './file.js';
+import { File, type FileConfig } from './file.js';
 import { Indexer, type IndexRecord } from './indexer.js';
 import { createId } from './utils.js';
 
 /**
  * Vault record format - stored in each .vault.json file
+ * Extends FileConfig to leverage File unit's capabilities
  */
-interface VaultRecord<T> {
-  id: string;                           // User ID (urn, did, etc.)
-  filename: string;                     // Generated filename
-  data: T;                              // The actual data
-  metadata: Record<string, unknown>;    // User metadata
+interface VaultRecord<T> extends FileConfig<T> {
   collection: string;                   // Collection name
-  format: 'json';                       // Data format
-  encoding: 'utf8';                     // Encoding type
   created: Date;                        // Creation timestamp
   updated: Date;                        // Last update timestamp
   version: string;                      // Vault format version
@@ -45,19 +40,17 @@ interface VaultConfig {
 }
 
 /**
- * Vault data type for generic storage
+ * Default vault data type
  */
-type VaultData = Record<string, unknown>;
+type VaultData = VaultRecord<Record<string, unknown>>;
 
 /**
- * Vault properties following Unit Architecture
+ * Vault properties extending Unit Architecture
  */
-interface VaultProps<T> extends UnitProps {
-  name: string;
+interface VaultProps<T extends VaultRecord<unknown>> extends UnitProps {
   path: string;
-  encryption: boolean;
-  config: VaultConfig;
-  indexers: Map<string, Indexer>; // collection -> indexer mapping
+  indexers: Map<string, Indexer>;
+  filesystemContract?: TeachingContract; // Store the filesystem teaching contract
 }
 
 /**
@@ -70,7 +63,7 @@ interface VaultProps<T> extends UnitProps {
  * - ID → filename mapping prevents filesystem-unsafe IDs in filenames
  * - Consciousness-based unit collaboration
  */
-export class Vault<T = VaultData> extends Unit<VaultProps<T>> {
+export class Vault<T extends VaultRecord<unknown> = VaultData> extends Unit<VaultProps<T>> {
 
   protected constructor(props: VaultProps<T>) {
     super(props);
@@ -86,17 +79,18 @@ export class Vault<T = VaultData> extends Unit<VaultProps<T>> {
         storage: 'file'
       });
       
-      // Share filesystem capabilities with indexer
-      if (this.can('filesystem.writeFileSync')) {
-        indexer.learn([{
-          unitId: 'filesystem',
-          capabilities: this._capabilities.get('filesystem') as any
-        }]);
+      // Share filesystem capabilities with indexer if we have learned them
+      if (this.props.filesystemContract) {
+        indexer.learn([this.props.filesystemContract]);
       }
       
       this.props.indexers.set(collection, indexer);
     }
-    return this.props.indexers.get(collection)!;
+    const indexer = this.props.indexers.get(collection);
+    if (!indexer) {
+      throw new Error(`Failed to create indexer for collection: ${collection}`);
+    }
+    return indexer;
   }
 
   /**
@@ -144,27 +138,28 @@ export class Vault<T = VaultData> extends Unit<VaultProps<T>> {
       const filename = this.generateFilename(metadata);
       const filepath = `${this.props.path}/${collection}/${filename}`;
       
-      // Create vault record using File as structure
+      // Create vault record using FileConfig structure
       const vaultRecord: VaultRecord<T> = {
         id,                           // User ID (urn, did, etc.)
         filename: filepath,           // Generated filename
-        data,
-        metadata,
-        collection,
-        format: 'json',
-        encoding: 'utf8',
-        created: new Date(),
-        updated: new Date(),
-        version: this.props.config.version
+        data,                         // The actual data
+        metadata,                     // User metadata
+        format: 'json',               // Data format (from FileConfig)
+        encoding: 'utf8',             // Encoding type (from FileConfig)
+        collection,                   // Collection name (vault-specific)
+        created: new Date(),          // Creation timestamp (vault-specific)
+        updated: new Date(),          // Last update timestamp (vault-specific)
+        version: this.props.config.version // Vault format version (vault-specific)
       };
 
-      // Use File as pure data container
+      // Use File as pure data container with FileConfig compatibility
       const file = File.create<VaultRecord<T>>({
         id: vaultRecord.id,
         filename: vaultRecord.filename,
         data: vaultRecord,  // Store the entire vault record as data
         format: 'json',
-        encoding: 'utf8'
+        encoding: 'utf8',
+        metadata: vaultRecord.metadata
       });
       const serializedData = file.toJSON();
       
@@ -457,6 +452,25 @@ export class Vault<T = VaultData> extends Unit<VaultProps<T>> {
         'vault.stats': this.stats.bind(this) as any
       }
     };
+  }
+
+  /**
+   * Learn capabilities from other units and store filesystem contract for sharing
+   */
+  learn(contracts: TeachingContract[]): void {
+    super.learn(contracts);
+    
+    // Store filesystem contract for sharing with indexers
+    const filesystemContract = contracts.find(contract => 
+      contract.unitId === 'filesystem' || 
+      contract.capabilities.readFileSync || 
+      contract.capabilities.writeFileSync
+    );
+    
+    if (filesystemContract) {
+      // Store the filesystem contract for indexer sharing
+      (this.props as VaultProps<T> & { filesystemContract?: TeachingContract }).filesystemContract = filesystemContract;
+    }
   }
 
   help(): string {
