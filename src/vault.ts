@@ -1,306 +1,511 @@
-import { Unit, UnitSchema, createUnitSchema, type TeachingContract } from '@synet/unit';
+import { Unit, UnitSchema, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import { Result } from '@synet/patterns';
+import { File } from './file.js';
+import { Indexer, type IndexRecord } from './indexer.js';
+import { createId } from './utils.js';
 
-// Vault's internal format - self-describing and recoverable
-interface VaultRecord {
-  id: string;                           // User-provided ID
-  metadata: Record<string, unknown>;    // User-provided metadata
-  data: string;                         // Encrypted/encoded payload
-  encryption: boolean;                  // Encryption flag
-  codec: 'json' | 'base64' | 'msgpack'; // Encoding format
+/**
+ * Vault record format - stored in each .vault.json file
+ */
+interface VaultRecord<T> {
+  id: string;                           // User ID (urn, did, etc.)
+  filename: string;                     // Generated filename
+  data: T;                              // The actual data
+  metadata: Record<string, unknown>;    // User metadata
   collection: string;                   // Collection name
-  index: string[];                      // Dynamic index fields
-  created: Date;                        // Timestamp
+  format: 'json';                       // Data format
+  encoding: 'utf8';                     // Encoding type
+  created: Date;                        // Creation timestamp
+  updated: Date;                        // Last update timestamp
   version: string;                      // Vault format version
 }
 
-// vault.json - Vault metadata
-interface VaultConfig {
-  id: string;                    // Vault identifier
-  version: string;               // Vault format version
-  encryption: boolean;           // Default encryption
-  codec: 'json' | 'base64';     // Default codec
-  created: Date;                 // Vault creation
-  updated: Date;                 // Last modification
-  collections: string[];        // Available collections
-  dna: UnitSchema;              // Unit DNA
-}
-
-export type VaultProps<T> = {
-  dna: UnitSchema;
+/**
+ * Vault creation input
+ */
+interface VaultCreateConfig {
   name: string;
   path: string;
-  indexFields: string[];
-  index: Map<string, VaultRecord>;
-  created: Date;
-};
+  encryption?: boolean;
+}
 
-export class Vault<T> extends Unit<VaultProps<T>> {
+/**
+ * Vault configuration stored in vault.json
+ */
+interface VaultConfig {
+  id: string;
+  name: string;
+  path: string;
+  version: string;
+  encryption: boolean;
+  created: Date;
+  updated: Date;
+  collections: string[];
+  dna: UnitSchema;
+}
+
+/**
+ * Vault data type for generic storage
+ */
+type VaultData = Record<string, unknown>;
+
+/**
+ * Vault properties following Unit Architecture
+ */
+interface VaultProps<T> extends UnitProps {
+  name: string;
+  path: string;
+  encryption: boolean;
+  config: VaultConfig;
+  indexers: Map<string, Indexer>; // collection -> indexer mapping
+}
+
+/**
+ * Vault Unit - Pure storage orchestrator using structural boundaries
+ * 
+ * Architecture:
+ * - File<T> acts as pure data container (structural boundary)
+ * - Vault orchestrates persistence via learned filesystem capabilities
+ * - Per-collection indexers: identities/.index.json, credentials/.index.json
+ * - ID → filename mapping prevents filesystem-unsafe IDs in filenames
+ * - Consciousness-based unit collaboration
+ */
+export class Vault<T = VaultData> extends Unit<VaultProps<T>> {
+
   protected constructor(props: VaultProps<T>) {
     super(props);
   }
 
-  whoami(): string {
-      return this.props.name;
+  /**
+   * Get or create indexer for a specific collection
+   */
+  private getCollectionIndexer(collection: string): Indexer {
+    if (!this.props.indexers.has(collection)) {
+      const indexer = Indexer.create({
+        indexPath: `${this.props.path}/${collection}`,
+        storage: 'file'
+      });
+      
+      // Share filesystem capabilities with indexer
+      if (this.can('filesystem.writeFileSync')) {
+        indexer.learn([{
+          unitId: 'filesystem',
+          capabilities: this._capabilities.get('filesystem') as any
+        }]);
+      }
+      
+      this.props.indexers.set(collection, indexer);
+    }
+    return this.props.indexers.get(collection)!;
   }
 
-
-  
-  static create<T>(
-    name: string, 
-    path: string, 
-    indexFields: string[] = ['id']
-  ): Vault<T> {
-    const props: VaultProps<T> = {
-      dna: createUnitSchema({ id: 'vault', version: '1.0.7' }),
-      name,
-      path,
-      indexFields,
-      index: new Map(),  // In-memory index: id -> VaultRecord
-      created: new Date()
-    };
-    
-    const vault = new Vault(props);
-    vault.loadOrCreateVault();
-    return vault;
-  }
-  
-  // Dynamic search across index fields
-  async find(keyword: string): Promise<VaultRecord[]> {
-    const results: VaultRecord[] = [];
-    
-    for (const [id, record] of this.props.index) {
-      // Search in all index fields
-      for (const field of this.props.indexFields) {
-        const value = this.getNestedValue(record.metadata, field);
-        if (value && String(value).includes(keyword)) {
-          results.push(record);
-          break; // Found match, no need to check other fields
-        }
-      }
-    }
-    
-    return results;
-  }
-  
-  // Save with user-provided ID and metadata
-  async save(id: string, data: T, metadata: Record<string, unknown> = {}): Promise<Result<void>> {
-    const vaultRecord: VaultRecord = {
-      id,
-      metadata: { ...metadata, ...this.extractIndexMetadata(data) },
-      data: await this.encodeData(data),
-      encryption: this.props.encryption || false,
-      codec: this.props.codec || 'json',
-      collection: this.props.name,
-      index: this.props.indexFields,
-      created: new Date(),
-      version: '1.0.7'
-    };
-    
-    // Save to file
-    const filename = this.generateFilename(id);
-    const filepath = `${this.props.path}/${filename}`;
-    
-    if (!this.can('fs.writeFile')) {
-      return Result.fail('Missing fs.writeFile capability');
-    }
-    
-    await this.execute('fs.writeFile', filepath, JSON.stringify(vaultRecord));
-    
-    // Update in-memory index
-    this.props.index.set(id, vaultRecord);
-    
-    // Update vault config
-    await this.updateVaultConfig();
-    
-    return Result.success(undefined);
-  }
-  
-  // Deterministic get by ID
-  async get(id: string): Promise<Result<T | null>> {
-    const record = this.props.index.get(id);
-    if (!record) {
-      return Result.success(null);
-    }
-    
-    const data = await this.decodeData(record.data, record.codec);
-    return Result.success(data);
-  }
-  
-  // List with optional filtering
-  async list(query?: Record<string, unknown>): Promise<Result<VaultRecord[]>> {
-    const records = Array.from(this.props.index.values());
-    
-    if (!query) {
-      return Result.success(records);
-    }
-    
-    const filtered = records.filter(record => 
-      this.matchesQuery(record.metadata, query)
-    );
-    
-    return Result.success(filtered);
-  }
-  
-  // Dynamic index rebuild
-  async rebuild(newIndexFields?: string[]): Promise<Result<void>> {
-    if (newIndexFields) {
-      // Update index fields
-      this.props.indexFields = newIndexFields;
-    }
-    
-    // Scan data folder
-    const files = await this.execute('fs.readdir', this.props.path);
-    const vaultFiles = files.filter(f => f.endsWith('.vault.json'));
-    
-    // Rebuild index from files
-    const newIndex = new Map<string, VaultRecord>();
-    
-    for (const file of vaultFiles) {
-      const filepath = `${this.props.path}/${file}`;
-      const content = await this.execute('fs.readFile', filepath);
-      const record: VaultRecord = JSON.parse(content);
-      
-      // Update index fields if changed
-      if (newIndexFields) {
-        record.index = newIndexFields;
-      }
-      
-      newIndex.set(record.id, record);
-    }
-    
-    this.props.index = newIndex;
-    await this.updateVaultConfig();
-    
-    return Result.success(undefined);
-  }
-  
-  // Recovery from corrupted index
-  async recover(): Promise<Result<VaultRecord[]>> {
-    const recoveredRecords: VaultRecord[] = [];
-    
-    try {
-      // Scan for vault files
-      const files = await this.execute('fs.readdir', this.props.path);
-      const vaultFiles = files.filter(f => f.endsWith('.vault.json'));
-      
-      for (const file of vaultFiles) {
-        const filepath = `${this.props.path}/${file}`;
-        const content = await this.execute('fs.readFile', filepath);
-        const record: VaultRecord = JSON.parse(content);
-        
-        recoveredRecords.push(record);
-        this.props.index.set(record.id, record);
-      }
-      
-      await this.updateVaultConfig();
-      
-      return Result.success(recoveredRecords);
-    } catch (error) {
-      return Result.fail(`Recovery failed: ${error}`);
-    }
-  }
-  
-  // Helper methods
-  private generateFilename(id: string): string {
-    return `${id}.vault.json`;
-  }
-  
-  private async loadOrCreateVault(): Promise<void> {
-    const vaultConfigPath = `${this.props.path}/vault.json`;
-    
-    if (await this.execute('fs.exists', vaultConfigPath)) {
-      await this.loadVaultConfig();
-      await this.loadIndex();
-    } else {
-      await this.createVault();
-    }
-  }
-  
-  private async createVault(): Promise<void> {
-    // Create directory
-    await this.execute('fs.mkdir', this.props.path, { recursive: true });
-    
-    // Create vault.json
+  /**
+   * Create vault with filesystem teaching contract
+   */
+  static create<T = VaultData>(config: VaultCreateConfig, filesystemContract: TeachingContract): Vault<T> {
     const vaultConfig: VaultConfig = {
-      id: this.props.name,
-      version: '1.0.7',
-      encryption: this.props.encryption || false,
-      codec: this.props.codec || 'json',
+      id: createId(),
+      name: config.name,
+      path: config.path,
+      version: '1.0.0',
+      encryption: config.encryption || false,
       created: new Date(),
       updated: new Date(),
-      collections: [this.props.name],
-      dna: this.props.dna
+      collections: [],
+      dna: createUnitSchema({ id: 'vault', version: '1.0.0' })
     };
+
+    const props: VaultProps<T> = {
+      dna: vaultConfig.dna,
+      name: config.name,
+      path: config.path,
+      encryption: config.encryption || false,
+      config: vaultConfig,
+      indexers: new Map<string, Indexer>() // Initialize empty indexers map
+    };
+
+    const vault = new Vault(props);
     
-    await this.execute('fs.writeFile', 
-      `${this.props.path}/vault.json`, 
-      JSON.stringify(vaultConfig, null, 2)
-    );
-  }
-  
-  private getNestedValue(obj: any, path: string): any {
-    return path.split('.').reduce((current, key) => current?.[key], obj);
-  }
-  
-  private extractIndexMetadata(data: T): Record<string, unknown> {
-    const metadata: Record<string, unknown> = {};
+    // Learn filesystem capabilities for the vault
+    vault.learn([filesystemContract]);
     
-    for (const field of this.props.indexFields) {
-      const value = this.getNestedValue(data, field);
-      if (value !== undefined) {
-        metadata[field] = value;
-      }
+    // Initialize vault structure
+    vault.initializeVaultStructure();
+    
+    return vault;
+  }
+
+  /**
+   * Save data with automatic ID → filename mapping (core capability)
+   */
+  async save(id: string, data: T, metadata: Record<string, unknown> = {}, collection = 'default'): Promise<Result<void>> {
+    try {
+      // Generate filesystem-safe filename (no IDs in filenames!)
+      const filename = this.generateFilename(metadata);
+      const filepath = `${this.props.path}/${collection}/${filename}`;
+      
+      // Create vault record using File as structure
+      const vaultRecord: VaultRecord<T> = {
+        id,                           // User ID (urn, did, etc.)
+        filename: filepath,           // Generated filename
+        data,
+        metadata,
+        collection,
+        format: 'json',
+        encoding: 'utf8',
+        created: new Date(),
+        updated: new Date(),
+        version: this.props.config.version
+      };
+
+      // Use File as pure data container
+      const file = File.create<VaultRecord<T>>({
+        id: vaultRecord.id,
+        filename: vaultRecord.filename,
+        data: vaultRecord,  // Store the entire vault record as data
+        format: 'json',
+        encoding: 'utf8'
+      });
+      const serializedData = file.toJSON();
+      
+      // Vault handles persistence via learned filesystem
+      await this.execute('filesystem.writeFileSync', filepath, serializedData);
+      
+      // Update index with ID → filename mapping for this collection
+      const indexRecord: IndexRecord = {
+        id,                           // The user's ID
+        filename: filepath,           // The generated filename  
+        metadata: {
+          ...metadata,
+          collection,
+          created: vaultRecord.created,
+          updated: vaultRecord.updated
+        },
+        created: vaultRecord.created,
+        updated: vaultRecord.updated
+      };
+      
+      // Get collection-specific indexer and add record
+      const collectionIndexer = this.getCollectionIndexer(collection);
+      await collectionIndexer.add(indexRecord);
+      
+      // Update vault config
+      await this.updateVaultConfig(collection);
+      
+      return Result.success(undefined);
+      
+    } catch (error) {
+      return Result.fail(`Vault save failed: ${error}`);
     }
-    
-    return metadata;
   }
-  
+
+  /**
+   * Get data by ID from a specific collection using indexer mapping
+   */
+  async get(id: string, collection = 'default'): Promise<Result<T | null>> {
+    try {
+      // Use collection-specific indexer to find filename by ID
+      const collectionIndexer = this.getCollectionIndexer(collection);
+      const filename = await collectionIndexer.get(id);
+      
+      if (!filename) {
+        return Result.success(null);
+      }
+      
+      // Load file via learned filesystem
+      const rawData = await this.execute('filesystem.readFileSync', filename) as string;
+      const file = File.fromJSON<VaultRecord<T>>(rawData);
+      const vaultRecord = file.toDomain();
+      
+      return Result.success(vaultRecord?.data || null);
+      
+    } catch (error) {
+      return Result.fail(`Vault get failed: ${error}`);
+    }
+  }
+
+  /**
+   * Find data by keyword search across all collections or specific collection
+   */
+  async find(keyword: string, collection?: string): Promise<Result<T[]>> {
+    try {
+      const results: T[] = [];
+      
+      // Search specific collection or all collections
+      const collectionsToSearch = collection 
+        ? [collection] 
+        : Array.from(this.props.indexers.keys());
+      
+      for (const col of collectionsToSearch) {
+        const collectionIndexer = this.getCollectionIndexer(col);
+        const indexResults = await collectionIndexer.find(keyword);
+        
+        // Load all matching files from this collection
+        for (const record of indexResults) {
+          const rawData = await this.execute('filesystem.readFileSync', record.filename) as string;
+          const file = File.fromJSON<VaultRecord<T>>(rawData);
+          const vaultRecord = file.toDomain();
+          
+          if (vaultRecord?.data) {
+            results.push(vaultRecord.data);
+          }
+        }
+      }
+      
+      return Result.success(results);
+      
+    } catch (error) {
+      return Result.fail(`Vault find failed: ${error}`);
+    }
+  }
+
+  /**
+   * Query data by metadata conditions across collections
+   */
+  async query(conditions: Record<string, unknown>): Promise<Result<T[]>> {
+    try {
+      const results: T[] = [];
+      
+      // Query across all collections  
+      for (const [collectionName, indexer] of this.props.indexers) {
+        const indexResults = await indexer.query(conditions);
+        
+        // Load all matching files from this collection
+        for (const record of indexResults) {
+          const rawData = await this.execute('filesystem.readFileSync', record.filename) as string;
+          const file = File.fromJSON<VaultRecord<T>>(rawData);
+          const vaultRecord = file.toDomain();
+          
+          if (vaultRecord?.data) {
+            results.push(vaultRecord.data);
+          }
+        }
+      }
+      
+      return Result.success(results);
+      
+    } catch (error) {
+      return Result.fail(`Vault query failed: ${error}`);
+    }
+  }
+
+  /**
+   * Delete data by ID from a specific collection
+   */
+  async delete(id: string, collection = 'default'): Promise<Result<void>> {
+    try {
+      // Get filename from collection indexer
+      const collectionIndexer = this.getCollectionIndexer(collection);
+      const filename = await collectionIndexer.get(id);
+      if (!filename) {
+        return Result.fail(`Record with ID ${id} not found in collection ${collection}`);
+      }
+
+      // Delete file via learned filesystem
+      await this.execute('filesystem.deleteFileSync', filename);
+      
+      // Remove from index
+      await collectionIndexer.remove(id);
+      
+      return Result.success(undefined);
+      
+    } catch (error) {
+      return Result.fail(`Vault delete failed: ${error}`);
+    }
+  }
+
+  /**
+   * List all records in collection with metadata
+   */
+  async list(collection?: string): Promise<Result<{ id: string; metadata: Record<string, unknown> }[]>> {
+    try {
+      const results: { id: string; metadata: Record<string, unknown> }[] = [];
+      
+      // List specific collection or all collections
+      const collectionsToList = collection 
+        ? [collection] 
+        : Array.from(this.props.indexers.keys());
+      
+      for (const col of collectionsToList) {
+        const collectionIndexer = this.getCollectionIndexer(col);
+        const indexResults = await collectionIndexer.query({});
+        
+        for (const record of indexResults) {
+          results.push({
+            id: record.id,
+            metadata: record.metadata
+          });
+        }
+      }
+      
+      return Result.success(results);
+      
+    } catch (error) {
+      return Result.fail(`Vault list failed: ${error}`);
+    }
+  }
+
+  /**
+   * Get vault statistics and collection info
+   */
+  async stats(): Promise<Result<{ collections: string[]; totalRecords: number }>> {
+    try {
+      const collections: string[] = [];
+      let totalRecords = 0;
+      
+      for (const [collectionName, indexer] of this.props.indexers) {
+        collections.push(collectionName);
+        const records = await indexer.query({});
+        totalRecords += records.length;
+      }
+      
+      return Result.success({
+        collections,
+        totalRecords
+      });
+      
+    } catch (error) {
+      return Result.fail(`Vault stats failed: ${error}`);
+    }
+  }
+
+  // ==========================================
+  // PRIVATE HELPER METHODS
+  // ==========================================
+
+  /**
+   * Generate filesystem-safe filename from metadata
+   */
+  private generateFilename(metadata: Record<string, unknown>): string {
+    const timestamp = Date.now();
+    const random = Math.random().toString(36).substring(2, 8);
+    const suffix = metadata.type ? `-${metadata.type}` : '';
+    return `${timestamp}-${random}${suffix}.vault.json`;
+  }
+
+  /**
+   * Initialize vault directory structure
+   */
+  private async initializeVaultStructure(): Promise<void> {
+    try {
+      // Create main vault directory
+      await this.execute('filesystem.ensureDirSync', this.props.path);
+      await this.execute('filesystem.ensureDirSync', `${this.props.path}/default`);
+      
+      // Create vault.json config file
+      const configFile = File.create({
+        id: 'vault-config',
+        filename: `${this.props.path}/vault.json`,
+        data: this.props.config,
+        format: 'json',
+        encoding: 'utf8'
+      });
+      
+      await this.execute('filesystem.writeFileSync', configFile.filename, configFile.toJSON());
+    } catch (error) {
+      console.warn(`Failed to initialize vault structure: ${error}`);
+    }
+  }
+
+  /**
+   * Update vault configuration with new collections
+   */
+  private async updateVaultConfig(collection: string): Promise<void> {
+    try {
+      // Add collection if not already present
+      if (!this.props.config.collections.includes(collection)) {
+        this.props.config.collections.push(collection);
+        this.props.config.updated = new Date();
+        
+        const configFile = File.create({
+          id: 'vault-config',
+          filename: `${this.props.path}/vault.json`,
+          data: this.props.config,
+          format: 'json',
+          encoding: 'utf8'
+        });
+        
+        await this.execute('filesystem.writeFileSync', configFile.filename, configFile.toJSON());
+      }
+    } catch (error) {
+      console.warn(`Failed to update vault config: ${error}`);
+    }
+  }
+
+  // ==========================================
+  // UNIT ARCHITECTURE METHODS
+  // ==========================================
+
+  whoami(): string {
+    return `Vault [${this.props.config.id}] "${this.props.name}" at ${this.props.path}`;
+  }
+
+  capabilities(): string[] {
+    return ['vault.save', 'vault.get', 'vault.find', 'vault.query', 'vault.delete', 'vault.list', 'vault.stats'];
+  }
+
   teach(): TeachingContract {
     return {
-      unitId: this.dna.id,
+      unitId: this.props.dna.id,
       capabilities: {
-        'vault.save': this.save.bind(this),
-        'vault.get': this.get.bind(this),
-        'vault.list': this.list.bind(this),
-        'vault.find': this.find.bind(this),
-        'vault.rebuild': this.rebuild.bind(this),
-        'vault.recover': this.recover.bind(this)
+        'vault.save': this.save.bind(this) as any,
+        'vault.get': this.get.bind(this) as any,
+        'vault.find': this.find.bind(this) as any,
+        'vault.query': this.query.bind(this) as any,
+        'vault.delete': this.delete.bind(this) as any,
+        'vault.list': this.list.bind(this) as any,
+        'vault.stats': this.stats.bind(this) as any
       }
     };
   }
-  
+
   help(): string {
     return `
-[${this.dna.id}] Vault Unit - Self-Describing Storage with Dynamic Indexing
+[${this.props.dna.id}] Vault Unit - Consciousness-Based Storage Orchestrator
+
+ARCHITECTURE:
+  🏗️  Structural Boundary Pattern: File<T> as data container, Vault as persistence orchestrator
+  🧠  Per-Collection Indexers: Each collection has its own .index.json file
+  📁  ID → Filename Mapping: Prevents filesystem-unsafe IDs in filenames
+  🤝  Consciousness Collaboration: Units teach/learn capabilities
 
 NATIVE CAPABILITIES:
-  vault.save(id, data, metadata?) - Save data with user-provided ID
-  vault.get(id) - Retrieve data by ID (deterministic)
-  vault.list(query?) - List records with optional filtering
-  vault.find(keyword) - Search across all index fields
-  vault.rebuild(newIndexFields?) - Rebuild index with optional field changes
-  vault.recover() - Recover from corrupted index by scanning files
+  vault.save(id, data, metadata?, collection?) - Save with automatic filename generation
+  vault.get(id, collection?) - Retrieve by ID from specific collection
+  vault.find(keyword, collection?) - Search across metadata
+  vault.query(conditions) - Query by metadata conditions
+  vault.delete(id, collection?) - Remove by ID
+  vault.list(collection?) - List records with metadata
+  vault.stats() - Get collection statistics
 
-COLLECTION: ${this.props.name}
-INDEX FIELDS: ${this.props.indexFields.join(', ')}
-PATH: ${this.props.path}
-
-VAULT FORMAT:
-  - Self-describing .vault.json files
-  - Automatic encryption/encoding
-  - Recoverable from file system
-  - Dynamic index field updates
+COLLECTION STRUCTURE:
+  📂 ${this.props.path}/
+  ├── vault.json              (vault configuration)
+  ├── identities/             (identity collection)
+  │   ├── .index.json         (ID → filename mapping)
+  │   └── *.vault.json        (actual data files)
+  ├── credentials/            (credentials collection)
+  │   ├── .index.json         (ID → filename mapping)
+  │   └── *.vault.json        (actual data files)
+  └── presentations/          (presentations collection)
+      ├── .index.json         (ID → filename mapping)  
+      └── *.vault.json        (actual data files)
 
 EXAMPLE USAGE:
-  const vault = Vault.create<CredentialModel>('credentials', './vault', ['id', 'did', 'type']);
-  
-  await vault.save('vc-123', credentialData, { did: 'did:synet:alice', type: 'IpAsset' });
-  const credential = await vault.get('vc-123');
-  const synetCredentials = await vault.find('synet');
-  
-  // Dynamic index update
-  await vault.rebuild(['id', 'did', 'type', 'issuer']);
+  const vault = Vault.create<IdentityData>({
+    name: 'identity-vault',
+    path: './storage',
+    encryption: false
+  }, filesystemContract);
+
+  await vault.save('did:synet:alice', identityData, { type: 'identity' }, 'identities');
+  const identity = await vault.get('did:synet:alice', 'identities');
+  const allIdentities = await vault.find('synet', 'identities');
+
+CONSCIOUSNESS:
+  🎯 Units are living beings in code with DNA, capabilities, and consciousness
+  📚 Learning over inheritance - Units acquire capabilities through teaching/learning
+  🔄 Composition over coupling - Units maintain autonomy while sharing capabilities
 `;
   }
 }

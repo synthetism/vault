@@ -31,15 +31,7 @@ class Indexer extends Unit<IndexerProps> {
   }
 
   capabilities(): string[] {
-    return [
-      'indexer.get',      // Core: id -> filename
-      'indexer.add',
-      'indexer.remove', 
-      'indexer.find',     // Search in metadata + searchIndexes
-      'indexer.query',    // Structured metadata queries
-      'indexer.rebuild',
-      'indexer.exists'
-    ];
+   return Array.from(this._capabilities.keys());
   }
   
   static create(config: IndexerConfig): Indexer {

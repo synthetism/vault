@@ -3,5 +3,4 @@ dist
 logs
 node_modules/
 temp
-/data
-docs
+examples

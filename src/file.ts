@@ -13,14 +13,13 @@ import { createId, base64urlEncode, base64urlDecode, hexEncode, hexDecode } from
  */
 export interface IFile<T> {
   // File identity
-  readonly id: string;
   
   // Core file operations
-  save(): Promise<Result<void>>;
-  load(): Promise<Result<T>>;
+  write(): Promise<Result<void>>;
+  read(): Promise<Result<T>>;
   exists(): Promise<boolean>;
-  delete(): Promise<Result<void>>;
-  
+  unlink(): Promise<Result<void>>;
+
   // File introspection
   metadata(): Record<string, unknown>;
   checksum(): string;
@@ -43,6 +42,7 @@ export interface FileConfig<T> {
   encoding?: 'utf8' | 'base64' | 'hex';
   compression?: boolean;
   encryption?: boolean;
+  [x: string]: unknown
 }
 
 /**
@@ -98,7 +98,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   /**
    * File saves itself using learned filesystem capabilities
    */
-  async save(): Promise<Result<void>> {
+  async write(): Promise<Result<void>> {
     try {
       if (!this.can('fs.writeFile')) {
         return Result.fail(`[${this.props.filename}] Missing filesystem capability. File needs to learn from a filesystem unit.`);
@@ -117,9 +117,9 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   }
 
   /**
-   * File loads itself using learned filesystem capabilities
+   * File reads itself using learned filesystem capabilities
    */
-  async load(): Promise<Result<T>> {
+  async read(): Promise<Result<T>> {
     try {
       if (!this.can('fs.readFile')) {
         return Result.fail(`[${this.props.filename}] Missing filesystem capability. File needs to learn from a filesystem unit.`);
@@ -152,7 +152,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   /**
    * File deletes itself
    */
-  async delete(): Promise<Result<void>> {
+  async unlink(): Promise<Result<void>> {
     try {
       if (!this.can('fs.unlink')) {
         return Result.fail(`[${this.props.filename}] Missing filesystem capability for deletion.`);
@@ -245,29 +245,13 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
     return `File<T> [${this.props.id}] ${this.props.filename} - ${this.props.format} format, created by ${this.props.creatorDNA.id}`;
   }
 
-  /**
-   * File ID getter (IFile interface requirement)
-   */
-  get id(): string {
-    return this.props.id;
-  }
+
 
   /**
    * File capabilities
    */
   capabilities(): string[] {
-    return [
-      'file.save',
-      'file.load', 
-      'file.exists',
-      'file.delete',
-      'file.metadata',
-      'file.checksum',
-      'file.size',
-      'file.validate',
-      'file.encode',
-      'file.decode'
-    ];
+   return Array.from(this._capabilities.keys());
   }
 
   /**
@@ -277,10 +261,10 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
     return {
       unitId: this.dna.id,
       capabilities: {
-        'file.save': this.save.bind(this),
-        'file.load': this.load.bind(this),
+        'file.write': this.write.bind(this),
+        'file.read': this.read.bind(this),
         'file.exists': this.exists.bind(this),
-        'file.delete': this.delete.bind(this),
+        'file.unlink': this.unlink.bind(this),
         'file.metadata': this.metadata.bind(this),
         'file.checksum': this.checksum.bind(this),
         'file.size': this.size.bind(this),
@@ -308,10 +292,10 @@ VERSION: ${this.props.version}
 CREATOR: ${this.props.creatorDNA.id}
 
 NATIVE CAPABILITIES:
-  file.save() - Save file using learned filesystem
-  file.load() - Load file data
+  file.write() - Save file using learned filesystem
+  file.read() - Load file data
   file.exists() - Check if file exists
-  file.delete() - Remove file
+  file.unlink() - Remove file
   file.metadata() - Get file information (includes ID for indexing)
   file.checksum() - Calculate data integrity hash
   file.size() - Get file size in bytes
@@ -417,6 +401,47 @@ EXAMPLE:
         }
         return defaultParsed.data;
     }
+  }
+
+  /**
+   * Export file as JSON for storage by Vault
+   */
+  toJSON(): string {
+    return this.serializeForStorage();
+  }
+
+  /**
+   * Extract typed domain data from file
+   */
+  toDomain(): T | undefined {
+    return this.props.data;
+  }
+
+  /**
+   * Create file from raw JSON data (for Vault reconstruction)
+   */
+  static fromJSON<T>(jsonData: string, config?: Partial<FileConfig<T>>): File<T> {
+    try {
+      const parsed = JSON.parse(jsonData);
+      
+      return File.create<T>({
+        id: parsed.id,
+        filename: config?.filename || 'unknown.json',
+        data: parsed.data,
+        metadata: parsed.metadata || {},
+        format: config?.format || 'json',
+        encoding: config?.encoding || 'utf8',
+        compression: config?.compression || false,
+        encryption: config?.encryption || false,
+        ...config
+      });
+    } catch (error) {
+      throw new Error(`Failed to create File from JSON: ${error}`);
+    }
+  }
+
+  get id(): string {
+    return this.props.id;
   }
 
   // Getters for easy access
