@@ -272,7 +272,9 @@ class Indexer extends Unit<IndexerProps> {
       for (const [key, value] of Object.entries(obj)) {
         if (typeof value === 'string' && value.toLowerCase().includes(keyword)) {
           return true;
-        } else if (typeof value === 'object' && value !== null) {
+        } 
+        
+        if (typeof value === 'object' && value !== null) {
           if (search(value)) return true;
         }
       }
@@ -282,9 +284,9 @@ class Indexer extends Unit<IndexerProps> {
     return search(metadata);
   }
 
-  private getNestedValue(obj: any, path: string): any {
+  /* private getNestedValue(obj: any, path: string): any {
     return path.split('.').reduce((current, key) => current?.[key], obj);
-  }
+  } */
 
   private matchesConditions(metadata: Record<string, unknown>, conditions: Record<string, unknown>): boolean {
     for (const [key, value] of Object.entries(conditions)) {

@@ -153,7 +153,7 @@ export function hexDecode(data: string): string {
     // Fallback for browser
     let result = "";
     for (let i = 0; i < data.length; i += 2) {
-      result += String.fromCharCode(parseInt(data.substring(i, i + 2), 16));
+      result += String.fromCharCode(Number.parseInt(data.substring(i, i + 2), 16));
     }
     return result;
   } catch (error) {

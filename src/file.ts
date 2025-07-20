@@ -3,7 +3,7 @@
  * The foundation for self-managing, type-aware files
  */
 
-import { Unit, UnitSchema, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
+import { Unit,createUnitSchema,  type UnitSchema,  type TeachingContract, type UnitProps } from '@synet/unit';
 import { Result } from '@synet/patterns';
 import { createId, base64urlEncode, base64urlDecode, hexEncode, hexDecode } from './utils.js';
 
@@ -217,7 +217,6 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
         return base64urlEncode(data);
       case 'hex':
         return hexEncode(data);
-      case 'utf8':
       default:
         return data;
     }
@@ -231,8 +230,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
       case 'base64':
         return base64urlDecode(data);
       case 'hex':
-        return hexDecode(data);
-      case 'utf8':
+        return hexDecode(data);     
       default:
         return data;
     }
