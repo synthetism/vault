@@ -157,11 +157,15 @@ describe('Vault<T> Unit - Single-Purpose Type-Safe Vault', () => {
       });
 
       // Load the same vault
-      const loadedVault = await Vault.load<Config>(testDir, mockFs as any);
+      const loadResult = await Vault.load<Config>(testDir, mockFs as any);
 
-      expect(loadedVault).toBeDefined();
-      expect(loadedVault.whoami()).toContain('config-vault');
-      expect(loadedVault.whoami()).toContain(testDir);
+      expect(loadResult.isSuccess).toBe(true);
+      if (loadResult.isSuccess) {
+        const loadedVault = loadResult.value;
+        expect(loadedVault).toBeDefined();
+        expect(loadedVault.whoami()).toContain('config-vault');
+        expect(loadedVault.whoami()).toContain(testDir);
+      }
     });
 
     it('should create vault even when path does not exist (idempotent)', async () => {
@@ -189,6 +193,53 @@ describe('Vault<T> Unit - Single-Purpose Type-Safe Vault', () => {
       // Check that it exists
       expect(Vault.exists(path, mockFs as any)).toBe(true);
       expect(Vault.exists(`${testDir}/non-existent`, mockFs as any)).toBe(false);
+    });
+
+    it('should handle corrupted vault metadata gracefully', async () => {
+      // Create a path with corrupted metadata
+      const path = `${testDir}/corrupted-vault`;
+      mockFs.ensureDirSync(path);
+      
+      // Write corrupted JSON to .vault.json
+      mockFs.writeFileSync(`${path}/.vault.json`, 'invalid json content {{{');
+      
+      // Should not throw - should recreate metadata
+      const vault = await Vault.create<Identity>({
+        path,
+        fs: mockFs as any,
+        name: 'recovery-vault'
+      });
+      
+      expect(vault).toBeDefined();
+      expect(vault.whoami()).toContain('recovery-vault');
+      
+      // Should have recreated valid metadata
+      const metadataContent = mockFs.readFileSync(`${path}/.vault.json`);
+      const metadata = JSON.parse(metadataContent);
+      expect(metadata.name).toBe('recovery-vault');
+      expect(metadata.version).toBeDefined();
+    });
+
+    it('should handle missing required fields in metadata', async () => {
+      // Create a path with incomplete metadata
+      const path = `${testDir}/incomplete-vault`;
+      mockFs.ensureDirSync(path);
+      
+      // Write incomplete metadata (missing required fields)
+      mockFs.writeFileSync(`${path}/.vault.json`, JSON.stringify({
+        name: 'incomplete',
+        // Missing version, created, etc.
+      }));
+      
+      // Should not throw - should recreate metadata
+      const vault = await Vault.create<Identity>({
+        path,
+        fs: mockFs as any,
+        name: 'fixed-vault'
+      });
+      
+      expect(vault).toBeDefined();
+      expect(vault.whoami()).toContain('fixed-vault');
     });
   });
 

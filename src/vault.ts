@@ -12,6 +12,7 @@ import { Unit, createUnitSchema, type TeachingContract, type UnitProps } from '@
 import type { FileSystem } from '@synet/fs';
 import { File, type FileConfig } from './file.js';
 import { Indexer, type IndexRecord } from './indexer.js';
+import { Result } from '@synet/patterns';
 
 const VERSION = '1.0.0';
 /**
@@ -86,41 +87,33 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
    * 
    * If vault exists: loads existing vault with updated lastAccessed
    * If vault doesn't exist: creates new vault with provided config
+   * If vault exists but is corrupted: recreates vault metadata
    */
   static async create<T>(config: VaultConfig): Promise<Vault<T>> {
-    // Ensure vault directory exists
+    // Try to load existing vault first
+    const loadResult = await Vault.load<T>(config.path, config.fs);
+    if (loadResult.isSuccess) {
+      // Successfully loaded existing vault - update lastAccessed and return
+      const vault = loadResult.value;
+      vault.props.vaultMetadata.lastAccessed = new Date();
+      await vault.saveVaultMetadata();
+      return vault;
+    }
+    
+    // Loading failed (doesn't exist or corrupted) - create new vault
     config.fs.ensureDirSync(config.path);
     
-    const metadataPath = `${config.path}/.vault.json`;
-    let vaultMetadata: VaultMetadata;
-    let isExisting = false;
-    
-    // Check if vault already exists
-    if (config.fs.existsSync(metadataPath)) {
-      // Load existing vault metadata
-      const metadataContent = config.fs.readFileSync(metadataPath);
-      const existingMetadata = JSON.parse(metadataContent) as VaultMetadata;
-      
-      // Update lastAccessed and preserve existing metadata
-      vaultMetadata = {
-        ...existingMetadata,
-        lastAccessed: new Date()
-      };
-      isExisting = true;
-    } else {
-      // Create new vault metadata
-      vaultMetadata = {
-        name: config.name || 'vault',
-        version: config.version || VERSION,
-        dataType: 'T', // Will be inferred from usage
-        created: new Date(),
-        lastAccessed: new Date(),
-        encryption: config.encryption || false,
-        compression: config.compression || false,
-        encoding: config.encoding || 'utf8',
-        format: config.format || 'json'
-      };
-    }
+    const vaultMetadata: VaultMetadata = {
+      name: config.name || 'vault',
+      version: config.version || VERSION,
+      dataType: 'T', // Will be inferred from usage
+      created: new Date(),
+      lastAccessed: new Date(),
+      encryption: config.encryption || false,
+      compression: config.compression || false,
+      encoding: config.encoding || 'utf8',
+      format: config.format || 'json'
+    };
     
     // Create indexer for this vault
     const indexer = Indexer.create({
@@ -143,18 +136,68 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     
     const vault = new Vault<T>(props);
     
-    // Save updated metadata (either new creation or lastAccessed update)
+    // Save new vault metadata
     await vault.saveVaultMetadata();
     
     return vault;
   }
 
   /**
-   * Load existing vault from path (legacy method - use create() instead)
-   * @deprecated Use create() method which handles both creation and loading
+   * Load existing vault from path with full validation
    */
-  static async load<T>(path: string, fs: FileSystem): Promise<Vault<T>> {
-    return Vault.create<T>({ path, fs });
+  static async load<T>(path: string, fs: FileSystem): Promise<Result<Vault<T>>> {
+    try {
+      const metadataPath = `${path}/.vault.json`;
+      
+      // Check if vault exists
+      if (!fs.existsSync(metadataPath)) {
+        return Result.fail(`Vault not found at ${path} - missing .vault.json`);
+      }
+      
+      // Try to load and parse metadata
+      const metadataContent = fs.readFileSync(metadataPath);
+      const vaultMetadata = JSON.parse(metadataContent) as VaultMetadata;
+      
+      // Validate required fields
+      if (!vaultMetadata.name || !vaultMetadata.version || !vaultMetadata.created) {
+        return Result.fail(`Invalid vault metadata structure in ${metadataPath}`);
+      }
+      
+      // Reconstruct config from metadata
+      const config: VaultConfig = {
+        path,
+        fs,
+        encryption: vaultMetadata.encryption,
+        compression: vaultMetadata.compression,
+        encoding: vaultMetadata.encoding as 'utf8' | 'base64' | 'hex',
+        format: vaultMetadata.format as 'json' | 'binary' | 'text',
+        name: vaultMetadata.name,
+        version: vaultMetadata.version
+      };
+      
+      // Create indexer
+      const indexer = Indexer.create({
+        indexPath: path,
+        storage: 'file'
+      });
+      indexer.learn([fs.teach()]);
+      
+      const props: OneVaultProps<T> = {
+        dna: createUnitSchema({ id: 'vault', version: VERSION }),
+        path,
+        fs,
+        indexer,
+        config,
+        vaultMetadata,
+        created: new Date()
+      };
+      
+      const vault = new Vault<T>(props);
+      
+      return Result.success(vault);
+    } catch (error) {
+      return Result.fail(`Failed to load vault from ${path}: ${error}`);
+    }
   }
 
   /**
