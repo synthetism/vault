@@ -95,23 +95,15 @@ class Indexer extends Unit<IndexerProps> {
   }
   
   /**
-   * Find records by keyword - searches in metadata and search indexes
+   * Find records by keyword - searches only in each record's own metadata
    */
   async find(keyword: string): Promise<IndexRecord[]> {
     const results: IndexRecord[] = [];
     const lowerKeyword = keyword.toLowerCase();
     
     for (const [id, record] of this.props.records) {
-      // Search in all metadata values
+      // Search only in this record's metadata
       if (this.searchInMetadata(record.metadata, lowerKeyword)) {
-        results.push(record);
-        continue;
-      }
-      
-      // Search in search indexes
-      if (this.props.searchIndexes.some(term => 
-        term.toLowerCase().includes(lowerKeyword)
-      )) {
         results.push(record);
       }
     }
@@ -248,14 +240,14 @@ class Indexer extends Unit<IndexerProps> {
   private extractSearchTerms(metadata: Record<string, unknown>): string[] {
     const terms: string[] = [];
     
-    const extract = (obj: any, prefix = ''): void => {
+    const extract = (obj: Record<string, unknown>, prefix = ''): void => {
       for (const [key, value] of Object.entries(obj)) {
         if (typeof value === 'string') {
           terms.push(value);
           // Add individual words
           terms.push(...value.toLowerCase().split(/\s+/).filter(word => word.length > 2));
-        } else if (typeof value === 'object' && value !== null) {
-          extract(value, `${prefix}${key}.`);
+        } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          extract(value as Record<string, unknown>, `${prefix}${key}.`);
         }
       }
     };
@@ -268,14 +260,25 @@ class Indexer extends Unit<IndexerProps> {
    * Search in metadata recursively
    */
   private searchInMetadata(metadata: Record<string, unknown>, keyword: string): boolean {
-    const search = (obj: any): boolean => {
+    const search = (obj: Record<string, unknown>): boolean => {
       for (const [key, value] of Object.entries(obj)) {
+        // Search in string values
         if (typeof value === 'string' && value.toLowerCase().includes(keyword)) {
           return true;
-        } 
+        }
         
-        if (typeof value === 'object' && value !== null) {
-          if (search(value)) return true;
+        // Search in arrays of strings
+        if (Array.isArray(value)) {
+          for (const item of value) {
+            if (typeof item === 'string' && item.toLowerCase().includes(keyword)) {
+              return true;
+            }
+          }
+        }
+        
+        // Search in nested objects
+        if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+          if (search(value as Record<string, unknown>)) return true;
         }
       }
       return false;
@@ -284,7 +287,7 @@ class Indexer extends Unit<IndexerProps> {
     return search(metadata);
   }
 
-  /* private getNestedValue(obj: any, path: string): any {
+  /* private getNestedValue(obj: Record<string, unknown>, path: string): unknown {
     return path.split('.').reduce((current, key) => current?.[key], obj);
   } */
 
@@ -301,13 +304,13 @@ class Indexer extends Unit<IndexerProps> {
     return {
       unitId: this.dna.id,
       capabilities: {
-        'indexer.get': ((...args: unknown[]) => this.get(args[0] as string)) as (...args: unknown[]) => unknown,
-        'indexer.add': ((...args: unknown[]) => this.add(args[0] as IndexRecord)) as (...args: unknown[]) => unknown,
-        'indexer.remove': ((...args: unknown[]) => this.remove(args[0] as string)) as (...args: unknown[]) => unknown,
-        'indexer.find': ((...args: unknown[]) => this.find(args[0] as string)) as (...args: unknown[]) => unknown,
-        'indexer.query': ((...args: unknown[]) => this.query(args[0] as Record<string, unknown>)) as (...args: unknown[]) => unknown,
-        'indexer.rebuild': ((...args: unknown[]) => this.rebuild(args[0] as IndexRecord[])) as (...args: unknown[]) => unknown,
-        'indexer.exists': ((...args: unknown[]) => this.exists()) as (...args: unknown[]) => unknown
+        get: (...args: unknown[]) => this.get(args[0] as string),
+        add: (...args: unknown[]) => this.add(args[0] as IndexRecord),
+        remove: (...args: unknown[]) => this.remove(args[0] as string),
+        find: (...args: unknown[]) => this.find(args[0] as string),
+        query: (...args: unknown[]) => this.query(args[0] as Record<string, unknown>),
+        rebuild: (...args: unknown[]) => this.rebuild(args[0] as IndexRecord[]),
+        exists: (...args: unknown[]) => this.exists()
       }
     };
   }
@@ -317,13 +320,13 @@ class Indexer extends Unit<IndexerProps> {
 [${this.dna.id}] Indexer Unit - Metadata-Based Index Operations
 
 NATIVE CAPABILITIES:
-  indexer.get(id) - Get filename by ID (CORE FUNCTION)
-  indexer.add(record) - Add record to index (auto-generates search terms)
-  indexer.remove(id) - Remove record from index
-  indexer.find(keyword) - Search in metadata and search indexes
-  indexer.query(conditions) - Query by specific metadata conditions
-  indexer.rebuild(records) - Rebuild entire index from records
-  indexer.exists() - Check if index exists
+  get(id) - Get filename by ID (CORE FUNCTION)
+  add(record) - Add record to index (auto-generates search terms)
+  remove(id) - Remove record from index
+  find(keyword) - Search in metadata and search indexes
+  query(conditions) - Query by specific metadata conditions
+  rebuild(records) - Rebuild entire index from records
+  .exists() - Check if index exists
 
 STORAGE: ${this.props.storage}
 PATH: ${this.props.indexPath}

@@ -2,10 +2,9 @@
  * @synet/vault - Simple storage unit package
  */
 
-export { SimpleVault } from './simple-vault.js';
-export { CompleteVault } from './complete-vault.js';
-export { File } from './file.js';
-export { Indexer } from './indexer.js';
+export { CompleteVault } from './versions/complete-vault';
+export { File } from './file';
+export { Indexer } from './indexer';
 
 // Note: Complex vault temporarily disabled due to type issues
-// export { Vault } from './vault.js';
+ export { Vault } from './vault';

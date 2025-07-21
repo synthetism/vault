@@ -1,24 +1,16 @@
 /**
- * Complete Vault - Registry-based capability delegation + structural boundaries + indexing
+ * Complete Vault - Simple composition + structural boundaries + indexing
  * 
  * Architecture:
  * - Direct FileSystem composition (no complex teaching/learning)
- * - Registry for capability sharing to child units ("Wi-Fi" pattern)
  * - File unit for data serialization (structural boundary)
  * - Per-collection indexers with ID → filename mapping
  * - Each collection has its own folder and .index.json
- * 
- * Capability Delegation Pattern:
- * 1. Vault learns FileSystem capabilities directly (simple composition)
- * 2. Registry serves as shared capability space 
- * 3. Child units (indexers) enhance themselves via registry.enhance()
- * 4. "Teach children" - natural capability inheritance without complex protocols
  */
 import { Unit, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import type { FileSystem } from '@synet/fs';
-import { File, type FileConfig } from './file.js';
-import { Indexer, type IndexRecord } from './indexer.js';
-import type { UnitRegistry } from '@synet/registry';
+import { File, type FileConfig } from '../file.js';
+import { Indexer, type IndexRecord } from '../indexer.js';
 
 /**
  * Vault record format - extends FileConfig for structural boundary
@@ -36,7 +28,6 @@ interface VaultRecord<T = unknown> extends FileConfig<T> {
 interface CompleteVaultProps extends UnitProps {
   basePath: string;
   fs: FileSystem;
-  registry: UnitRegistry; // Central capability registry for child units
   indexers: Map<string, Indexer>;
 }
 
@@ -62,18 +53,10 @@ export class CompleteVault extends Unit<CompleteVaultProps> {
   }
 
   static create(basePath: string, fs: FileSystem): CompleteVault {
-    // Create registry for capability sharing
-    const { UnitRegistry } = require('@synet/registry');
-    const registry = UnitRegistry.create();
-    
-    // Register filesystem in the shared registry
-    registry.register(fs);
-    
     const props: CompleteVaultProps = {
       dna: createUnitSchema({ id: 'complete-vault', version: '1.0.0' }),
       basePath,
       fs,
-      registry,
       indexers: new Map<string, Indexer>(),
       created: new Date()
     };
@@ -82,7 +65,7 @@ export class CompleteVault extends Unit<CompleteVaultProps> {
   }
 
   /**
-   * Get or create indexer for a collection with registry-based capability sharing
+   * Get or create indexer for a collection
    */
   private getCollectionIndexer(collection: string): Indexer {
     if (!this.props.indexers.has(collection)) {
@@ -94,12 +77,8 @@ export class CompleteVault extends Unit<CompleteVaultProps> {
         storage: 'file'
       });
       
-      // Register indexer in shared registry
-      this.props.registry.register(indexer);
-      
-      // Delegate filesystem capabilities to indexer via registry
-      // This is the "teach children" pattern - sharing acquired capabilities
-      this.props.registry.enhance(indexer.dna.id, ['readFileSync', 'writeFileSync', 'existsSync', 'ensureDirSync']);
+      // Teach filesystem capabilities to the indexer
+      indexer.learn([this.props.fs.teach()]);
       
       this.props.indexers.set(collection, indexer);
     }
@@ -364,20 +343,13 @@ export class CompleteVault extends Unit<CompleteVaultProps> {
 
   help(): void {
     console.log(`
-Complete Vault Unit - Registry-based capability delegation + structural boundaries
+Complete Vault Unit - Simple composition + structural boundaries + indexing
 
 ARCHITECTURE:
   🏗️  Direct FileSystem composition (no complex teaching/learning overhead)
-  🌐  Registry for capability sharing to child units ("Wi-Fi for capabilities")
   📁  File unit for data serialization (structural boundary)  
   🗂️  Per-collection indexers with ID → filename mapping
   📂  Each collection has its own folder and .index.json
-
-CAPABILITY DELEGATION PATTERN:
-  1. Vault learns filesystem capabilities directly
-  2. Registry serves as shared capability space
-  3. Child units (indexers) enhance themselves via registry
-  4. "Teach children" - natural capability inheritance
 
 STRUCTURE:
   ${this.props.basePath}/
@@ -409,7 +381,6 @@ USAGE:
   const stats = await vault.stats();
 
 FileSystem: ${this.props.fs.whoami()}
-Registry: ${this.props.registry.whoami()}
 Collections: ${Array.from(this.props.indexers.keys()).join(', ') || 'none yet'}
 `);
   }

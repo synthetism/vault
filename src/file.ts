@@ -259,16 +259,16 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
     return {
       unitId: this.dna.id,
       capabilities: {
-        'file.write': this.write.bind(this),
-        'file.read': this.read.bind(this),
-        'file.exists': this.exists.bind(this),
-        'file.unlink': this.unlink.bind(this),
-        'file.metadata': this.metadata.bind(this),
-        'file.checksum': this.checksum.bind(this),
-        'file.size': this.size.bind(this),
-        'file.validate': this.validate.bind(this),
-        'file.encode': (data: unknown) => this.encode(String(data)),
-        'file.decode': (data: unknown) => this.decode(String(data))
+        write: (...args: unknown[]) => this.write(),
+        read: (...args: unknown[]) => this.read(),
+        exists: (...args: unknown[]) => this.exists(),
+        unlink: (...args: unknown[]) => this.unlink(),
+        metadata: (...args: unknown[]) => this.metadata(),
+        checksum: (...args: unknown[]) => this.checksum(),
+        size: (...args: unknown[]) => this.size(),
+        validate: (...args: unknown[]) => this.validate(args[0]),
+        encode: (...args: unknown[]) => this.encode(String(args[0])),
+        decode: (...args: unknown[]) => this.decode(String(args[0]))
       }
     };
   }
@@ -290,14 +290,14 @@ VERSION: ${this.props.version}
 CREATOR: ${this.props.creatorDNA.id}
 
 NATIVE CAPABILITIES:
-  file.write() - Save file using learned filesystem
-  file.read() - Load file data
-  file.exists() - Check if file exists
-  file.unlink() - Remove file
-  file.metadata() - Get file information (includes ID for indexing)
-  file.checksum() - Calculate data integrity hash
-  file.size() - Get file size in bytes
-  file.validate(data) - Type validation
+  write() - Save file using learned filesystem
+  read() - Load file data
+  exists() - Check if file exists
+  unlink() - Remove file
+  metadata() - Get file information (includes ID for indexing)
+  checksum() - Calculate data integrity hash
+  size() - Get file size in bytes
+  validate(data) - Type validation
 
 INDEXING:
   - Each file has a unique ID (${this.props.id})
@@ -469,6 +469,12 @@ EXAMPLE:
    * Extract typed domain data from file
    */
   toDomain(): T | undefined {
+    // If data is encrypted, decrypt it before returning
+    if (this.props.encryption && typeof this.props.data === 'string' && 
+        this.props.data.startsWith('encrypted:')) {
+      return this.decryptData(this.props.data);
+    }
+    
     return this.props.data;
   }
 
