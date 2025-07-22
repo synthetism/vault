@@ -10,7 +10,7 @@
  */
 import { Unit, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import type { AsyncFileSystem } from '@synet/fs';
-import { File, type FileConfig } from './file-simple.js';
+import { File, type FileConfig } from './file.js';
 import { Indexer, type IndexRecord } from './indexer.js';
 import { Result } from '@synet/patterns';
 

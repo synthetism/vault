@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { File, type FileConfig } from '../src/file-complex.js';
+import { File, type FileConfig } from '../examples/file-complex.js';
 import { Result } from '@synet/patterns';
 import { AsyncFileSystem } from '@synet/fs';
 
