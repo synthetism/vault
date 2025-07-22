@@ -63,6 +63,8 @@ export interface FileProps<T> extends UnitProps {
   creatorDNA: UnitSchema;  // DNA of the system that created this file
 }
 
+
+const VERSION = '1.0.0';  // Current IFile interface version
 /**
  * File<T> - Conscious file unit implementation
  * Self-managing, type-safe file that knows how to persist itself
@@ -81,14 +83,14 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
       dna: createUnitSchema({ id: 'file', version: '1.0.0' }),
       id: config.id || createId(), // Generate ID if not provided
       filename: config.filename,
-      data: config.data,
+      data: config.data as T,
       metadata: config.metadata || {},
       format: config.format || 'json',
       encoding: config.encoding || 'utf8',
       compression: config.compression || false,
       encryption: config.encryption || false,
       created: new Date(),
-      version: '1.0.0',  // IFile interface version
+      version: VERSION,  // IFile interface version
       creatorDNA: createUnitSchema({ id: 'unknown', version: '1.0.0' }) // Default, can be overridden
     };
 
@@ -312,7 +314,7 @@ ENCODING SUPPORT:
 LEARNING PATTERN:
   const fs = AsyncFileSystem.create(); // Use AsyncFileSystem Unit
   file.learn([fs.teach()]);
-  await file.save(); // File saves itself!
+  await file.write(); // File saves itself!
 
 CONSCIOUSNESS:
   - Files know their unique identity (ID)
@@ -330,7 +332,7 @@ EXAMPLE:
   });
   
   config.learn([fs.teach()]);
-  await config.save(); // Self-saving configuration!
+  await config.write(); // Self-saving configuration!
   
   // Later, indexer can restore: ID 'app-config-v1' → 'app.config.json'
 `;
@@ -483,8 +485,10 @@ EXAMPLE:
    */
   static fromJSON<T>(jsonData: string, config?: Partial<FileConfig<T>>): File<T> {
     try {
+
+
       const parsed = JSON.parse(jsonData);
-      
+
       return File.create<T>({
         id: parsed.id,
         filename: config?.filename || 'unknown.json',

@@ -101,7 +101,7 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     }
     
     // Loading failed (doesn't exist or corrupted) - create new vault
-    config.fs.ensureDir(config.path);
+    await config.fs.ensureDir(config.path);
     
     const vaultMetadata: VaultMetadata = {
       name: config.name || 'vault',
@@ -234,15 +234,21 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     };
 
     // Use File unit as structural boundary
-    const file = File.create<VaultRecord<T>>({
+    const file = File.create<T>({
       id: vaultRecord.id,
-      filename: vaultRecord.filename,
-      data: vaultRecord,
+      filename: filepath,
+      data: vaultRecord.data,
+      metadata: vaultRecord.metadata
     });
     
-    // Save file via direct FileSystem composition
-    const serializedData = file.toJSON();
-    this.props.fs.writeFile(filepath, serializedData);
+    // Teach filesystem capabilities to file
+    file.learn([this.props.fs.teach()]);
+    
+    // File saves itself with proper structure
+    const result = await file.write();
+    if (!result.isSuccess) {
+      throw new Error(`Failed to save file: ${result.error}`);
+    }
     
     // Update index with ID → filename mapping
     const indexRecord: IndexRecord = {
@@ -275,23 +281,21 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
       }
       
       // Create file with the known filename and learn filesystem capabilities
-      const file = File.create<VaultRecord<T>>({
+      const file = File.create<T>({
         id,
         filename
       });
       file.learn([this.props.fs.teach()]);
       
-      // Read the file - gets VaultRecord<T> from JSON
+      // Read the file - gets the data T directly
       const result = await file.read();
       if (!result.isSuccess) {
         console.error(`Failed to read file ${filename}:`, result.error);
         return null;
       }
       
-      const vaultRecord = result.value;
-      
-      // VaultRecord contains the actual domain data
-      return vaultRecord?.data || null;
+      // File returns the domain data directly
+      return result.value || null;
     } catch (error) {
       console.error('Failed to get record:', error);
       return null;
@@ -309,15 +313,15 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
       // Load all matching files
       for (const record of indexResults) {
         try {
-          const file = File.create<VaultRecord<T>>({
+          const file = File.create<T>({
             id: record.id,
             filename: record.filename
           });
           file.learn([this.props.fs.teach()]);
           
           const result = await file.read();
-          if (result.isSuccess && result.value?.data) {
-            results.push(result.value.data);
+          if (result.isSuccess && result.value) {
+            results.push(result.value);
           }
         } catch (error) {
           console.warn(`Failed to load file ${record.filename}:`, error);
@@ -360,8 +364,8 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
         return false;
       }
 
-      // Delete file via direct FileSystem
-      this.props.fs.deleteFile(filename);
+      // Delete file via async FileSystem
+      await this.props.fs.deleteFile(filename);
       
       // Remove from index
       await this.props.indexer.remove(id);
@@ -409,7 +413,7 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   private async saveVaultMetadata(): Promise<void> {
     const metadataPath = `${this.props.path}/.vault.json`;
     const metadataContent = JSON.stringify(this.props.vaultMetadata, null, 2);
-    this.props.fs.writeFile(metadataPath, metadataContent);
+    await this.props.fs.writeFile(metadataPath, metadataContent);
   }
 
   // ==========================================

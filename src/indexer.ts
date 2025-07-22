@@ -159,7 +159,7 @@ class Indexer extends Unit<IndexerProps> {
     }
     
     const indexPath = this.getIndexFilePath();
-    return this.can('fs.existsSync') ? await this.execute('fs.existsSync', indexPath) : false;
+    return this.can('fs-async.exists') ? await this.execute('fs-async.exists', indexPath) : false;
   }
   
   // File operations
@@ -167,8 +167,8 @@ class Indexer extends Unit<IndexerProps> {
     if (this.props.storage === 'file') {
       const indexPath = this.getIndexFilePath();
       
-      if (this.can('fs.existsSync') && await this.execute('fs.existsSync', indexPath)) {
-        const content = await this.execute('fs.readFileSync', indexPath);
+      if (this.can('fs-async.exists') && await this.execute('fs-async.exists', indexPath)) {
+        const content = await this.execute('fs-async.readFile', indexPath);
         const indexData = JSON.parse(content as string);
         
         // Load records
@@ -197,10 +197,10 @@ class Indexer extends Unit<IndexerProps> {
       };
       
       // Ensure directory exists
-      await this.execute('fs.ensureDirSync', this.props.indexPath);
+      await this.execute('fs-async.ensureDir', this.props.indexPath);
       
-      // Use the correct method name that FileSystem teaches
-      await this.execute('fs.writeFileSync', indexPath, JSON.stringify(indexData, null, 2));
+      // Use the correct async method name that AsyncFileSystem teaches
+      await this.execute('fs-async.writeFile', indexPath, JSON.stringify(indexData, null, 2));
     }
   }
   

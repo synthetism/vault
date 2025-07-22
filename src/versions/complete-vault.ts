@@ -9,7 +9,7 @@
  */
 import { Unit, createUnitSchema, type TeachingContract, type UnitProps } from '@synet/unit';
 import type { FileSystem } from '@synet/fs';
-import { File, type FileConfig } from '../file.js';
+import { File, type FileConfig } from '../file-complex.js';
 import { Indexer, type IndexRecord } from '../indexer.js';
 
 /**
