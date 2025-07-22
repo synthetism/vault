@@ -124,6 +124,9 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     // Teach filesystem capabilities to indexer
     indexer.learn([config.fs.teach()]);
     
+    // Initialize indexer (load existing index file if present)
+    await indexer.initialize();
+    
     const props: OneVaultProps<T> = {
       dna: createUnitSchema({ id: 'vault', version: VERSION }),
       path: config.path,
@@ -181,6 +184,9 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
         storage: 'file'
       });
       indexer.learn([fs.teach()]);
+      
+      // Initialize indexer (load existing index file)
+      await indexer.initialize();
       
       const props: OneVaultProps<T> = {
         dna: createUnitSchema({ id: 'vault', version: VERSION }),
@@ -414,7 +420,7 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   // ==========================================
 
   whoami(): string {
-    return `Vault<${this.props.vaultMetadata.dataType}> [${this.props.vaultMetadata.name}] at ${this.props.path}`;
+    return `Vault [${this.props.vaultMetadata.name}] at ${this.props.path}`;
   }
 
   capabilities(): string[] {
@@ -483,17 +489,10 @@ USAGE:
   // Create specialized vaults (idempotent - creates or loads existing)
   const identityVault = await Vault.create<Identity>({
     path: 'storage/identities',  // or 'bucket/app/identities' for S3
-    fs: FileSystem.create({ type: 'node' }),
+    fs: FileSystem.create({ type: 'node' }), // @synet/fs
     encryption: true,
     format: 'json'
   });
-  
-  // Check if vault exists before creating (optional)
-  if (Vault.exists('storage/identities', fs)) {
-    console.log('Loading existing vault');
-  } else {
-    console.log('Creating new vault');
-  }
   
   // Clean, type-safe operations
   await identityVault.save('alice', aliceIdentity);

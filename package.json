@@ -1,6 +1,6 @@
 {
   "name": "@synet/vault",
-  "version": "0.0.1-dev.1",
+  "version": "0.0.1-dev.2",
   "description": "Identity vault core",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
-    "@synet/credential": "^1.0.2",
+    "@synet/credential": "^1.0.3",
     "@synet/fs": "^1.0.6-dev.4",
     "@synet/identity": "^1.0.1-dev.11",
     "@types/node": "^22.15.31",

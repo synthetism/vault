@@ -45,8 +45,16 @@ class Indexer extends Unit<IndexerProps> {
     };
     
     const indexer = new Indexer(props);
-    indexer.loadIndex();
+    // Note: loadIndex() will be called after learning filesystem capabilities
     return indexer;
+  }
+  
+  /**
+   * Initialize indexer with filesystem capabilities and load existing index
+   * Must be called after learning filesystem capabilities
+   */
+  async initialize(): Promise<void> {
+    await this.loadIndex();
   }
   
   // Core index operations

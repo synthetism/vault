@@ -108,7 +108,7 @@ describe('Vault<T> Unit - Single-Purpose Type-Safe Vault', () => {
       });
 
       expect(vault).toBeDefined();
-      expect(vault.whoami()).toContain('Vault<T>');
+      expect(vault.whoami()).toContain('Vault');
       expect(vault.whoami()).toContain('test-identities');
       expect(vault.whoami()).toContain(testDir);
 
@@ -530,7 +530,7 @@ describe('Vault<T> Unit - Single-Purpose Type-Safe Vault', () => {
     });
 
     it('should have proper unit identity', () => {
-      expect(vault.whoami()).toContain('Vault<T>');
+      expect(vault.whoami()).toContain('Vault');
       expect(vault.whoami()).toContain('architecture-vault');
       expect(vault.whoami()).toContain(testDir);
     });
