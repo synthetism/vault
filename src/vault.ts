@@ -241,9 +241,9 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   /**
    * Check if a vault exists at the given path
    */
-  static async exists(path: string, fs: AsyncFileSystem): Promise<boolean> {
+  async exists(path: string): Promise<boolean> {
     const metadataPath = `${path}/.vault.json`;
-    return await fs.exists(metadataPath);
+    return await this.props.fs.exists(metadataPath);
   }
   
   /**
@@ -255,8 +255,8 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
 [${this.dna.id}] Vault not initialized
 
 Resolution:
-  await vault.run();  // Awaken the vault first
-  vault.save(id, data); // Then use operations
+  await vault.init();  // Awaken the vault first
+  await vault.save(id, data); // Then use operations
 
 Current state: ${this._initialized ? 'awakened' : 'dormant'}
 `);
