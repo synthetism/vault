@@ -1,6 +1,6 @@
 {
   "name": "@synet/vault",
-  "version": "0.0.1-dev.3",
+  "version": "0.0.1-dev.4",
   "description": "Identity vault core",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -27,7 +27,8 @@
     "version:minor": "npm version --no-git-tag-version minor",
     "version:major": "npm version --no-git-tag-version major",
     "publish:dev": "npm publish --registry=https://registry.dig.run/ --tag dev",
-    "publish:prod": "npm publish --registry=https://registry.npmjs.org/"
+    "publish:prod": "npm publish --registry=https://registry.npmjs.org/",
+    "demo": "tsx demo/demo-one-vault.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",

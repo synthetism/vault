@@ -18,15 +18,16 @@ const VERSION = '1.0.0';
 /**
  * Vault configuration - storage-agnostic paths
  */
-interface VaultConfig {
-  path: string;                                    // Storage path (file: './identities', s3: 'bucket/folder/identities')
-  fs: AsyncFileSystem;                             // Async filesystem implementation
-  encryption?: boolean;                            // Encrypt stored data
-  compression?: boolean;                           // Compress stored data  
-  encoding?: 'utf8' | 'base64' | 'hex';           // Data encoding format
-  format?: 'json' | 'binary' | 'text';            // File format
-  name?: string;                                   // Vault name (for metadata)
-  version?: string;                                // Vault version
+export interface VaultConfig {
+
+  path: string;                              // Storage path (file: './identities', s3: 'bucket/folder/identities')
+  fs: AsyncFileSystem;                       // Async filesystem implementation
+  encryption?: boolean;                      // Encrypt stored data
+  compression?: boolean;                     // Compress stored data  
+  encoding?: 'utf8' | 'base64' | 'hex';      // Data encoding format
+  format?: 'json' | 'binary' | 'text';       // File format
+  metadata?: Record<string, unknown>;        // Additional metadata for runtime state
+  name?: string;   
 }
 
 /**
@@ -45,20 +46,25 @@ interface VaultRecord<T = unknown> extends FileConfig<T> {
  * OneVault properties
  */
 interface OneVaultProps<T> extends UnitProps {
+  name: string; // Vault name
   path: string;
   fs: AsyncFileSystem;
   indexer: Indexer;
-  config: VaultConfig;
-  vaultMetadata: VaultMetadata;
+  config: {
+    encryption: boolean;
+    compression: boolean;
+    encoding: string;
+    format: string;
+  };
+  metadata?: Record<string, unknown>; // Additional metadata for runtime state
 }
 
 /**
- * Vault metadata stored in .vault.json
+ * Vault metadata - represents vault state
  */
 interface VaultMetadata {
   name: string;
   version: string;
-  dataType: string;
   created: Date;
   lastAccessed: Date;
   encryption: boolean;
@@ -78,77 +84,104 @@ interface VaultMetadata {
  */
 export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   
+  private _initialized = false;
+
   protected constructor(props: OneVaultProps<T>) {
-    super(props);
+    super(props); 
   }
 
   /**
-   * Create or load a vault (idempotent operation)
-   * 
-   * If vault exists: loads existing vault with updated lastAccessed
-   * If vault doesn't exist: creates new vault with provided config
-   * If vault exists but is corrupted: recreates vault metadata
+   * Pure creation - sync configuration only
    */
-  static async create<T>(config: VaultConfig): Promise<Vault<T>> {
-    // Try to load existing vault first
-    const loadResult = await Vault.load<T>(config.path, config.fs);
-    if (loadResult.isSuccess) {
-      // Successfully loaded existing vault - update lastAccessed and return
-      const vault = loadResult.value;
-      vault.props.vaultMetadata.lastAccessed = new Date();
-      await vault.saveVaultMetadata();
-      return vault;
-    }
-    
-    // Loading failed (doesn't exist or corrupted) - create new vault
-    await config.fs.ensureDir(config.path);
-    
-    const vaultMetadata: VaultMetadata = {
-      name: config.name || 'vault',
-      version: config.version || VERSION,
-      dataType: 'T', // Will be inferred from usage
-      created: new Date(),
-      lastAccessed: new Date(),
-      encryption: config.encryption || false,
-      compression: config.compression || false,
-      encoding: config.encoding || 'utf8',
-      format: config.format || 'json'
-    };
-    
-    // Create indexer for this vault
+  static create<T>(config: VaultConfig): Vault<T> {
+    // Create indexer (sync)
     const indexer = Indexer.create({
       indexPath: config.path,
       storage: 'file'
     });
     
-    // Teach filesystem capabilities to indexer
-    indexer.learn([config.fs.teach()]);
-    
-    // Initialize indexer (load existing index file if present)
-    await indexer.initialize();
-    
-    const props: OneVaultProps<T> = {
+    // Create default metadata (uninitialized state)
+  
+    const props: OneVaultProps<T> = {      
+      name: config.name || `vault@${VERSION}`,
       dna: createUnitSchema({ id: 'vault', version: VERSION }),
       path: config.path,
       fs: config.fs,
       indexer,
-      config,
-      vaultMetadata,
-      created: new Date()
+      metadata: config?.metadata,
+      created: new Date(),
+      config: {
+        encryption: config.encryption || false,
+        compression: config.compression || false,
+        encoding: config.encoding || 'utf8',
+        format: config.format || 'json'
+      }
     };
     
-    const vault = new Vault<T>(props);
-    
-    // Save new vault metadata
-    await vault.saveVaultMetadata();
-    
-    return vault;
+    return new Vault<T>(props);
+  }
+
+  /**
+   * ✅ Async awakening - load existing or initialize new
+   */
+  async init(): Promise<void> {
+
+    if (this._initialized) {
+      return; // Already awakened
+    }
+
+    // Try to load existing vault metadata
+    const existingMetadata = await this.load();
+    if (existingMetadata) {
+      this._initialized = true;  
+    } else {
+      await this.props.fs.ensureDir(this.props.path);
+      this._initialized = true;
+    }
+
+    // Initialize child units
+    this.props.indexer.learn([this.props.fs.teach()]);
+    await this.props.indexer.initialize();
+
+    // Persist current state
+    await this.persist();
+  }
+
+  /**
+   * Load existing metadata if it exists
+   */
+  private async load(): Promise<VaultMetadata | null> {
+    try {
+      const metadataPath = `${this.props.path}/.vault.json`;
+      
+      if (!await this.props.fs.exists(metadataPath)) {
+        return null; // No existing vault
+      }
+      
+      const metadataContent = await this.props.fs.readFile(metadataPath);
+      const persistedState = JSON.parse(metadataContent);
+      
+      // Reconstruct full metadata with runtime state
+      return {
+        name: persistedState.name,
+        version: persistedState.version,
+        created: new Date(persistedState.created),
+        lastAccessed: new Date(persistedState.lastAccessed),
+        encryption: persistedState.encryption,
+        compression: persistedState.compression,
+        encoding: persistedState.encoding,
+        format: persistedState.format
+      };
+    } catch (error) {
+      console.warn(`Failed to load existing vault metadata: ${error}`);
+      return null; // Treat as new vault
+    }
   }
 
   /**
    * Load existing vault from path with full validation
    */
-  static async load<T>(path: string, fs: AsyncFileSystem): Promise<Result<Vault<T>>> {
+  /* static async load<T>(path: string, fs: AsyncFileSystem): Promise<Result<Vault<T>>> {
     try {
       const metadataPath = `${path}/.vault.json`;
       
@@ -175,7 +208,6 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
         encoding: vaultMetadata.encoding as 'utf8' | 'base64' | 'hex',
         format: vaultMetadata.format as 'json' | 'binary' | 'text',
         name: vaultMetadata.name,
-        version: vaultMetadata.version
       };
       
       // Create indexer
@@ -204,7 +236,7 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     } catch (error) {
       return Result.fail(`Failed to load vault from ${path}: ${error}`);
     }
-  }
+  } */
 
   /**
    * Check if a vault exists at the given path
@@ -215,9 +247,35 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   }
   
   /**
+   * ✅ Ensure vault is awakened before operations
+   */
+  private ensureInitialized(): void {
+    if (!this._initialized) {
+      throw new Error(`
+[${this.dna.id}] Vault not initialized
+
+Resolution:
+  await vault.run();  // Awaken the vault first
+  vault.save(id, data); // Then use operations
+
+Current state: ${this._initialized ? 'awakened' : 'dormant'}
+`);
+    }
+  }
+
+  /**
+   * ✅ State query methods
+   */
+  isInitialized(): boolean {
+    return this._initialized;
+  }
+
+  /**
    * Save typed data to vault
    */
   async save(id: string, data: T, metadata: Record<string, unknown> = {}): Promise<void> {
+    this.ensureInitialized();
+    
     // Generate storage-safe filename
     const filename = this.generateFilename(metadata);
     const filepath = `${this.props.path}/${filename}`;
@@ -265,13 +323,17 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     
     await this.props.indexer.add(indexRecord);
     
-    // No expensive metadata updates on save operations
+    // Update state and persist
+
+    await this.persist();
   }
 
   /**
    * Get typed data by ID
    */
   async get(id: string): Promise<T | null> {
+    this.ensureInitialized();
+    
     try {
       // Use indexer to find filename by ID
       const filename = await this.props.indexer.get(id);
@@ -306,6 +368,8 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
    * Find data by keyword
    */
   async find(keyword: string): Promise<T[]> {
+    this.ensureInitialized();
+    
     try {
       const results: T[] = [];
       const indexResults = await this.props.indexer.find(keyword);
@@ -339,6 +403,8 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
    * List all records with metadata
    */
   async list(): Promise<Array<{ id: string; metadata: Record<string, unknown> }>> {
+    this.ensureInitialized();
+    
     try {
       const indexResults = await this.props.indexer.query({});
       
@@ -356,6 +422,8 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
    * Delete record by ID
    */
   async delete(id: string): Promise<boolean> {
+    this.ensureInitialized();
+    
     try {
       // Get filename from indexer
       const filename = await this.props.indexer.get(id);
@@ -370,8 +438,7 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
       // Remove from index
       await this.props.indexer.remove(id);
       
-      // No expensive metadata updates on delete operations
-      
+         
       return true;
     } catch (error) {
       console.error('Failed to delete record:', error);
@@ -382,13 +449,21 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   /**
    * Get vault statistics (calculated dynamically)
    */
-  async stats(): Promise<{ name: string; totalRecords: number; metadata: VaultMetadata }> {
+  async stats(): Promise<{ 
+    name: string; 
+    totalRecords: number; 
+    metadata?: Record<string, unknown>;
+    created: Date;
+    }> { 
+    this.ensureInitialized();
+    
     const records = await this.props.indexer.query({});
     
     return {
-      name: this.props.vaultMetadata.name,
+      name: this.props.name,
       totalRecords: records.length, // Calculated on demand
-      metadata: this.props.vaultMetadata
+      metadata: this.props?.metadata || {},
+      created: this.props.created || new Date(),
     };
   }
 
@@ -408,30 +483,53 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
   }
 
   /**
-   * Save vault metadata to .vault.json
+   * ✅ Clean state persistence - only persist what we need
    */
-  private async saveVaultMetadata(): Promise<void> {
+  private async persist(): Promise<void> {
     const metadataPath = `${this.props.path}/.vault.json`;
-    const metadataContent = JSON.stringify(this.props.vaultMetadata, null, 2);
+    
+    // Only persist configuration, not runtime state
+    const persistedState: VaultMetadata = {
+      name: this.props.name,
+      version: this.props.dna.version,
+      created: this.props.created || new Date(),
+      lastAccessed: new Date(),
+      encryption: this.props.config.encryption,
+      compression: this.props.config.compression,
+      encoding: this.props.config.encoding,
+      format: this.props.config.format
+      // ✅ Don't persist: initialized (runtime state only)
+    };
+    
+    const metadataContent = JSON.stringify(persistedState, null, 2);
     await this.props.fs.writeFile(metadataPath, metadataContent);
   }
+
+  metadata(): Record<string, unknown> {
+    return {
+      ...this.props.metadata,
+    };
+  }
+
 
   // ==========================================
   // UNIT ARCHITECTURE METHODS
   // ==========================================
 
   whoami(): string {
-    return `Vault [${this.props.vaultMetadata.name}] at ${this.props.path}`;
+    return `Vault [${this.props.name}] at ${this.props.path}`;
   }
 
   capabilities(): string[] {
-    return ['save', 'get', 'find', 'list', 'delete', 'stats'];
+    return this._getAllCapabilities();
   }
 
   teach(): TeachingContract {
     return {
       unitId: this.props.dna.id,
       capabilities: {
+        init: () => this.init(),
+        isInitialized: () => this.isInitialized(),
         save: (...args: unknown[]) => this.save(
           args[0] as string, 
           args[1] as T, 
@@ -450,11 +548,10 @@ export class Vault<T = unknown> extends Unit<OneVaultProps<T>> {
     console.log(`
 Vault<T> Unit - Single-purpose, type-safe vault
 
-NAME: ${this.props.vaultMetadata.name}
-TYPE: ${this.props.vaultMetadata.dataType}
+NAME: ${this.props.name}
 PATH: ${this.props.path}
-CREATED: ${this.props.vaultMetadata.created}
-LAST ACCESSED: ${this.props.vaultMetadata.lastAccessed}
+CREATED: ${this.props.created}
+LAST ACCESSED: ${this.props.lastAccessed}
 
 CONFIGURATION:
   📁 Format: ${this.props.config.format}
@@ -469,9 +566,17 @@ STRUCTURE:
   └── *.vault.json         (typed data files)
 
 SIMPLE API:
-  // Type-safe operations
-  await vault.save(id, typedData);           // Save T
-  const data: T = await vault.get(id);       // Get T
+  // ✅ Two-phase initialization (consciousness awakening)
+  const vault = Vault.create<T>(config);        // Setup phase (sync)
+  await vault.run();                            // Awakening phase (async)
+  
+  // State queries
+  vault.isInitialized();                        // Check awakening state
+  vault.getState();                             // Get full metadata state
+  
+  // Type-safe operations (requires awakening)
+  await vault.save(id, typedData);              // Save T
+  const data: T = await vault.get(id);          // Get T
   const results: T[] = await vault.find(keyword);
   const list = await vault.list();
   await vault.delete(id);
@@ -487,19 +592,34 @@ PARAMS:
   version?: string;                      // Vault version (for metadata)
 
 USAGE:
-  // Create specialized vaults (idempotent - creates or loads existing)
-  const identityVault = await Vault.create<Identity>({
-    path: 'storage/identities',  // or 'bucket/app/identities' for S3
-    fs: FileSystem.create({ type: 'node' }), // @synet/fs
+  // ✅ Clean separation: creation vs awakening
+  const vault = Vault.create<Identity>({
+    path: 'storage/identities',
+    fs: FileSystem.create({ type: 'node' }),
     encryption: true,
     format: 'json'
   });
   
-  // Clean, type-safe operations
-  await identityVault.save('alice', aliceIdentity);
-  const alice: Identity = await identityVault.get('alice');
+  // Can pass dormant vault around in DI
+  const dependencies = { identityVault: vault };
+  
+  // Later, awaken the vault (async operations)
+  await vault.run();
+  
+  // Now ready for operations
+  await vault.save('alice', aliceIdentity);
+  const alice: Identity = await vault.get('alice');
 
    FileSystem: ${this.props.fs.whoami()}
 `);
   }
+
+  get name(): string {
+    return this.props.name;
+  }
+
+  get path(): string {
+    return this.props.path;
+  }
+
 }

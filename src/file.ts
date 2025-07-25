@@ -156,9 +156,7 @@ export class File<T> extends Unit<FileProps<T>> implements IFile<T> {
   }
 
   capabilities(): string[] {
-    const native = ['write', 'read', 'exists', 'unlink'];
-    const learned = Array.from(this._capabilities.keys());
-    return [...native, ...learned];
+    return this._getAllCapabilities();
   }
 
   teach(): TeachingContract {

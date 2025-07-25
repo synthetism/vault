@@ -36,7 +36,7 @@ class Indexer extends Unit<IndexerProps> {
   
   static create(config: IndexerConfig): Indexer {
     const props: IndexerProps = {
-      dna: createUnitSchema({ id: 'indexer', version: '1.0.8' }),
+      dna: createUnitSchema({ id: 'indexer', version: '1.0.0' }),
       created: new Date(),
       indexPath: config.indexPath,
       storage: config.storage || 'file',
